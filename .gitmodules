@@ -1,6 +1,6 @@
 [submodule "contrib/deterministic-build/electrum-mars-locale"]
 	path = contrib/deterministic-build/electrum-mars-locale
-	url = https://github.com/pooler/electrum-mars-locale
+	url = https://github.com/pooler/electrum-ltc-locale
 [submodule "electrum_mars/gui/kivy/theming/atlas"]
 	path = electrum_mars/gui/kivy/theming/atlas
 	url = https://github.com/spesmilo/electrum-kivy-atlas
