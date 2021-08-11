@@ -81,7 +81,7 @@ info "Building PyInstaller."
         info "pyinstaller already built, skipping"
         exit 0
     fi
-    cd "$WINEPREFIX/drive_c/electrum-ltc"
+    cd "$WINEPREFIX/drive_c/electrum-mars"
     ELECTRUM_COMMIT_HASH=$(git rev-parse HEAD)
     cd "$CACHEDIR"
     rm -rf pyinstaller

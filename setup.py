@@ -26,7 +26,7 @@ with open('contrib/requirements/requirements-hw.txt') as f:
     requirements_hw = f.read().splitlines()
 
 # load version.py; needlessly complicated alternative to "imp.load_source":
-version_spec = importlib.util.spec_from_file_location('version', 'electrum_ltc/version.py')
+version_spec = importlib.util.spec_from_file_location('version', 'electrum_mars/version.py')
 version_module = version = importlib.util.module_from_spec(version_spec)
 version_spec.loader.exec_module(version_module)
 
@@ -46,8 +46,8 @@ if platform.system() in ['Linux', 'FreeBSD', 'DragonFly']:
         else:
             usr_share = os.path.expanduser('~/.local/share')
     data_files += [
-        (os.path.join(usr_share, 'applications/'), ['electrum-ltc.desktop']),
-        (os.path.join(usr_share, icons_dirname), ['electrum_ltc/gui/icons/electrum-ltc.png']),
+        (os.path.join(usr_share, 'applications/'), ['electrum-mars.desktop']),
+        (os.path.join(usr_share, icons_dirname), ['electrum_mars/gui/icons/electrum-mars.png']),
     ]
 
 extras_require = {
@@ -65,33 +65,33 @@ extras_require['fast'] = extras_require['crypto']
 
 
 setup(
-    name="Electrum-LTC",
+    name="Electrum-MARS",
     version=version.ELECTRUM_VERSION,
     python_requires='>={}'.format(MIN_PYTHON_VERSION),
     install_requires=requirements,
     extras_require=extras_require,
     packages=[
-        'electrum_ltc',
-        'electrum_ltc.qrreader',
-        'electrum_ltc.gui',
-        'electrum_ltc.gui.qt',
-        'electrum_ltc.gui.qt.qrreader',
-        'electrum_ltc.gui.qt.qrreader.qtmultimedia',
-        'electrum_ltc.plugins',
-    ] + [('electrum_ltc.plugins.'+pkg) for pkg in find_packages('electrum_ltc/plugins')],
+        'electrum_mars',
+        'electrum_mars.qrreader',
+        'electrum_mars.gui',
+        'electrum_mars.gui.qt',
+        'electrum_mars.gui.qt.qrreader',
+        'electrum_mars.gui.qt.qrreader.qtmultimedia',
+        'electrum_mars.plugins',
+    ] + [('electrum_mars.plugins.'+pkg) for pkg in find_packages('electrum_mars/plugins')],
     package_dir={
-        'electrum_ltc': 'electrum_ltc'
+        'electrum_mars': 'electrum_mars'
     },
     # Note: MANIFEST.in lists what gets included in the tar.gz, and the
     # package_data kwarg lists what gets put in site-packages when pip installing the tar.gz.
     # By specifying include_package_data=True, MANIFEST.in becomes responsible for both.
     include_package_data=True,
-    scripts=['electrum_ltc/electrum-ltc'],
+    scripts=['electrum_mars/electrum-mars'],
     data_files=data_files,
-    description="Lightweight Litecoin Wallet",
+    description="Lightweight Marscoin Wallet",
     author="Thomas Voegtlin",
     author_email="thomasv@electrum.org",
     license="MIT Licence",
-    url="https://electrum-ltc.org",
-    long_description="""Lightweight Litecoin Wallet""",
+    url="https://electrum-mars.org",
+    long_description="""Lightweight Marscoin Wallet""",
 )

@@ -4,7 +4,7 @@ Building macOS binaries
 ✓ _This binary should be reproducible, meaning you should be able to generate
    binaries that match the official releases._
 
-This guide explains how to build Electrum-LTC binaries for macOS systems.
+This guide explains how to build Electrum-MARS binaries for macOS systems.
 
 
 ## Building the binary
@@ -36,8 +36,8 @@ Before starting, you should install `brew`.
 - We recommend creating a VM with a macOS guest, e.g. using VirtualBox,
   and building there.
 - The guest should run macOS 10.14.6 (that specific version).
-- The unix username should be `vagrant`, and `electrum-ltc` should be cloned directly
-  to the user's home dir: `/Users/vagrant/electrum-ltc`.
+- The unix username should be `vagrant`, and `electrum-mars` should be cloned directly
+  to the user's home dir: `/Users/vagrant/electrum-mars`.
 - Builders need to use the same version of Xcode; and note that
   full Xcode and Xcode commandline tools differ!
   You should build with Xcode 11.3.1 (full Xcode).
@@ -54,7 +54,7 @@ Before starting, you should install `brew`.
     $ mv /Library/Developer/CommandLineTools /Library/Developer/CommandLineTools2
     ```
   As a sanity check, make sure `$ gcc --version` consistently refers to the full Xcode.
-- Make sure that you are building from a fresh clone of electrum-ltc
+- Make sure that you are building from a fresh clone of electrum-mars
   (or run e.g. `git clean -ffxd` to rm all local changes).
 
 
@@ -75,12 +75,12 @@ Make sure it is the "selected" xcode (e.g.):
     sudo xcode-select -s $HOME/Downloads/Xcode.app/Contents/Developer/
 
 
-#### 2. Build Electrum-LTC
+#### 2. Build Electrum-MARS
 
-    cd electrum-ltc
+    cd electrum-mars
     ./contrib/osx/make_osx
 
-This creates both a folder named Electrum-LTC.app and the .dmg file.
+This creates both a folder named Electrum-MARS.app and the .dmg file.
 
 If you want the binaries codesigned for MacOS and notarised by Apple's central server,
 provide these env vars to the `make_osx` script:

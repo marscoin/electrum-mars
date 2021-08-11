@@ -15,7 +15,7 @@ export BUILD_TIME         := $(shell LC_ALL=C TZ=UTC date +'%H:%M:%S' -d @$(SOUR
 
 theming:
 	#bash -c 'for i in network lightning; do convert -background none theming/light/$i.{svg,png}; done'
-	$(PYTHON) -m kivy.atlas ../../electrum_ltc/gui/kivy/theming/atlas/light 1024 ../../electrum_ltc/gui/kivy/theming/light/*.png
+	$(PYTHON) -m kivy.atlas ../../electrum_mars/gui/kivy/theming/atlas/light 1024 ../../electrum_mars/gui/kivy/theming/light/*.png
 prepare:
 	# running pre build setup
 	@cp buildozer.spec ../../buildozer.spec

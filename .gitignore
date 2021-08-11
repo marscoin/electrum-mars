@@ -4,8 +4,8 @@
 build/
 dist/
 *.egg/
-Electrum_LTC.egg-info/
-electrum_ltc/locale/
+Electrum_MARS.egg-info/
+electrum_mars/locale/
 .devlocaltmp/
 *_trial_temp
 packages
@@ -16,7 +16,7 @@ bin/
 .idea
 .mypy_cache
 .vscode
-electrum-ltc_data
+electrum-mars_data
 .DS_Store
 
 # tests/tox
@@ -42,8 +42,8 @@ contrib/libusb/
 contrib/osx/build-venv/
 
 # shared objects
-electrum_ltc/*.so
-electrum_ltc/*.so.0
-electrum_ltc/*.dll
-electrum_ltc/*.dylib
+electrum_mars/*.so
+electrum_mars/*.so.0
+electrum_mars/*.dll
+electrum_mars/*.dylib
 contrib/osx/*.dylib

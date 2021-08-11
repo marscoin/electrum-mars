@@ -1,7 +1,7 @@
-Electrum-LTC - Lightweight Litecoin client
+Electrum-MARS - Lightweight Marscoin client
 ==========================================
 
-Electrum-LTC is a port of Electrum, the Bitcoin wallet, to Litecoin.
+Electrum-MARS is a port of Electrum, the Bitcoin wallet, to Marscoin.
 
 ::
 
@@ -9,7 +9,7 @@ Electrum-LTC is a port of Electrum, the Bitcoin wallet, to Litecoin.
   Original Author: Thomas Voegtlin
   Port Maintainer: Pooler
   Language: Python (>= 3.6)
-  Homepage: https://electrum-ltc.org/
+  Homepage: https://electrum-mars.org/
 
 
 
@@ -21,9 +21,9 @@ Getting started
 
 (*If you've come here looking to simply run Electrum,* `you may download it here`_.)
 
-.. _you may download it here: https://electrum-ltc.org/#download
+.. _you may download it here: https://electrum-mars.org/#download
 
-Electrum-LTC itself is pure Python, and so are most of the required dependencies,
+Electrum-MARS itself is pure Python, and so are most of the required dependencies,
 but not everything. The following sections describe how to run from source, but here
 is a TL;DR::
 
@@ -65,20 +65,20 @@ Running from tar.gz
 -------------------
 
 If you downloaded the official package (tar.gz), you can run
-Electrum-LTC from its root directory without installing it on your
+Electrum-MARS from its root directory without installing it on your
 system; all the pure python dependencies are included in the 'packages'
-directory. To run Electrum-LTC from its root directory, just do::
+directory. To run Electrum-MARS from its root directory, just do::
 
     ./run_electrum
 
-You can also install Electrum-LTC on your system, by running this command::
+You can also install Electrum-MARS on your system, by running this command::
 
     sudo apt-get install python3-setuptools python3-pip
     python3 -m pip install --user .
 
 This will download and install the Python dependencies used by
-Electrum-LTC instead of using the 'packages' directory.
-It will also place an executable named :code:`electrum-ltc` in :code:`~/.local/bin`,
+Electrum-MARS instead of using the 'packages' directory.
+It will also place an executable named :code:`electrum-mars` in :code:`~/.local/bin`,
 so make sure that is on your :code:`PATH` variable.
 
 
@@ -87,8 +87,8 @@ Development version (git clone)
 
 Check out the code from GitHub::
 
-    git clone git://github.com/pooler/electrum-ltc.git
-    cd electrum-ltc
+    git clone git://github.com/pooler/electrum-mars.git
+    cd electrum-mars
     git submodule update --init
 
 Run install (this should install dependencies)::
@@ -101,7 +101,7 @@ Create translations (optional)::
     sudo apt-get install python-requests gettext
     ./contrib/pull_locale
 
-Finally, to start Electrum-LTC::
+Finally, to start Electrum-MARS::
 
     ./run_electrum
 
@@ -149,10 +149,10 @@ Implementing new features, or improving/refactoring the codebase, is of course
 also welcome, but to avoid wasted effort, especially for larger changes,
 we encourage discussing these on the issue tracker or IRC first.
 
-Besides `GitHub`_, some communication about Electrum-LTC development happens on IRC, in the
-:code:`#electrum-ltc` channel on Libera Chat. The easiest way to participate on IRC is
+Besides `GitHub`_, some communication about Electrum-MARS development happens on IRC, in the
+:code:`#electrum-mars` channel on Libera Chat. The easiest way to participate on IRC is
 with the web client, `web.libera.chat`_.
 
 
-.. _web.libera.chat: https://web.libera.chat/#electrum-ltc
-.. _GitHub: https://github.com/pooler/electrum-ltc
+.. _web.libera.chat: https://web.libera.chat/#electrum-mars
+.. _GitHub: https://github.com/pooler/electrum-mars

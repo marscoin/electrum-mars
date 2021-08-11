@@ -1,0 +1,22 @@
+# If you want Electrum to appear in a Linux app launcher ("start menu"), install this by doing:
+# sudo desktop-file-install electrum-mars.desktop
+
+[Desktop Entry]
+Comment=Lightweight Marscoin Client
+Exec=sh -c "PATH=\"\\$HOME/.local/bin:\\$PATH\"; electrum-mars %u"
+GenericName[en_US]=Marscoin Wallet
+GenericName=Marscoin Wallet
+Icon=electrum-mars
+Name[en_US]=Electrum Marscoin Wallet
+Name=Electrum Marscoin Wallet
+Categories=Finance;Network;
+StartupNotify=true
+StartupWMClass=electrum-mars
+Terminal=false
+Type=Application
+MimeType=x-scheme-handler/marscoin;
+Actions=Testnet;
+
+[Desktop Action Testnet]
+Exec=sh -c "PATH=\"\\$HOME/.local/bin:\\$PATH\"; electrum-mars --testnet %u"
+Name=Testnet mode

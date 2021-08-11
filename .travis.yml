@@ -14,7 +14,7 @@ install:
 cache:
   - pip: true
   - directories:
-    - /tmp/electrum-ltc-build
+    - /tmp/electrum-mars-build
 script:
     - tox
 after_success:
@@ -26,17 +26,17 @@ jobs:
       language: python
       python: 3.7
       install:
-        - sudo add-apt-repository -y ppa:litecoin-project/litecoin
+        - sudo add-apt-repository -y ppa:marscoin-project/marscoin
         - sudo apt-get -qq update
-        - sudo apt-get install -yq litecoind
+        - sudo apt-get install -yq marscoind
         - sudo apt-get -y install libsecp256k1-0
         - pip install .[tests]
         - pip install electrumx
       before_script:
-          - electrum_ltc/tests/regtest/start_bitcoind.sh
-          - electrum_ltc/tests/regtest/start_electrumx.sh
+          - electrum_mars/tests/regtest/start_bitcoind.sh
+          - electrum_mars/tests/regtest/start_electrumx.sh
       script:
-        - python -m unittest electrum_ltc/tests/regtest.py
+        - python -m unittest electrum_mars/tests/regtest.py
       after_success: True
     - name: "Flake8 linter tests"
       language: python
