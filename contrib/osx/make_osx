@@ -6,7 +6,7 @@ set -e
 PYTHON_VERSION=3.7.9
 BUILDDIR=/tmp/electrum-mars-build
 PACKAGE=Electrum-MARS
-GIT_REPO=https://github.com/pooler/electrum-mars
+GIT_REPO=https://github.com/marscoin/electrum-mars
 
 export GCC_STRIP_BINARIES="1"
 export PYTHONDONTWRITEBYTECODE=1  # don't create __pycache__/ folders with .pyc files

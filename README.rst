@@ -87,7 +87,7 @@ Development version (git clone)
 
 Check out the code from GitHub::
 
-    git clone git://github.com/pooler/electrum-mars.git
+    git clone git://github.com/marscoin/electrum-mars.git
     cd electrum-mars
     git submodule update --init
 
@@ -155,4 +155,4 @@ with the web client, `web.libera.chat`_.
 
 
 .. _web.libera.chat: https://web.libera.chat/#electrum-mars
-.. _GitHub: https://github.com/pooler/electrum-mars
+.. _GitHub: https://github.com/marscoin/electrum-mars
