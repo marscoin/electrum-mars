@@ -77,7 +77,7 @@ class BitcoinMainnet(AbstractNet):
     ADDRTYPE_P2SH = 50
     SEGWIT_HRP = "mars"
     BOLT11_HRP = SEGWIT_HRP
-    GENESIS = "12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2"
+    GENESIS = "06e005f86644f15d2e4c62b59a038c798a3b0816ba58dcc8c91e02ce5a685299"
     DEFAULT_PORTS = {'t': '50001', 's': '50002'}
     DEFAULT_SERVERS = read_json('servers.json', {})
     CHECKPOINTS = read_json('checkpoints.json', [])
