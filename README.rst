@@ -1,3 +1,11 @@
+[![Gitter](https://badges.gitter.im/marscoin-dev/community.svg)](https://gitter.im/marscoin-dev/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge) [![Discord](https://img.shields.io/discord/591914197219016707.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/nU3NkGVNbV) [![Chat on Telegram](https://img.shields.io/badge/Chat%20on-Telegram-brightgreen.svg)](https://t.me/realmarscoin)
+
+http://www.marscoin.org
+
+http://www.marscoinfoundation.org
+
+
+
 Electrum-MARS - Lightweight Marscoin client
 ==========================================
 
@@ -7,9 +15,9 @@ Electrum-MARS is a port of Electrum, the Bitcoin wallet, to Marscoin.
 
   Licence: MIT Licence
   Original Author: Thomas Voegtlin
-  Port Maintainer: Pooler
+  Port Maintainer: Pooler, Marscoin Dev Team
   Language: Python (>= 3.6)
-  Homepage: https://electrum-mars.org/
+  Homepage: https://marscoin.org/electrum/
 
 
 
@@ -21,7 +29,7 @@ Getting started
 
 (*If you've come here looking to simply run Electrum,* `you may download it here`_.)
 
-.. _you may download it here: https://electrum-mars.org/#download
+.. _you may download it here: https://marscoin.org/electrum
 
 Electrum-MARS itself is pure Python, and so are most of the required dependencies,
 but not everything. The following sections describe how to run from source, but here
@@ -145,14 +153,3 @@ Contributing
 
 Any help testing the software, reporting or fixing bugs, reviewing pull requests
 and recent changes, writing tests, or helping with outstanding issues is very welcome.
-Implementing new features, or improving/refactoring the codebase, is of course
-also welcome, but to avoid wasted effort, especially for larger changes,
-we encourage discussing these on the issue tracker or IRC first.
-
-Besides `GitHub`_, some communication about Electrum-MARS development happens on IRC, in the
-:code:`#electrum-mars` channel on Libera Chat. The easiest way to participate on IRC is
-with the web client, `web.libera.chat`_.
-
-
-.. _web.libera.chat: https://web.libera.chat/#electrum-mars
-.. _GitHub: https://github.com/marscoin/electrum-mars
