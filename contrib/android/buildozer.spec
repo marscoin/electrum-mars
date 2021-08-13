@@ -56,8 +56,8 @@ presplash.filename = %(source.dir)s/electrum_mars/gui/icons/electrum_presplash.p
 
 # (str) Icon of the application
 icon.filename = %(source.dir)s/electrum_mars/gui/icons/android_electrum_icon_legacy.png
-icon.adaptive_foreground.filename = %(source.dir)s/electrum_mars/gui/icons/android_electrum_icon_foreground.png
-icon.adaptive_background.filename = %(source.dir)s/electrum_mars/gui/icons/android_electrum_icon_background.png
+icon.adaptive_foreground.filename = %(source.dir)s/electrum_mars/gui/icons/marscoin_android_electrum_icon_foreground.png
+icon.adaptive_background.filename = %(source.dir)s/electrum_mars/gui/icons/marscoin_android_electrum_icon_background.png
 
 # (str) Supported orientation (one of landscape, portrait or all)
 orientation = portrait
