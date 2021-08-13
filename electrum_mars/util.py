@@ -1558,7 +1558,6 @@ class JsonRPCClient:
         data = ('{"jsonrpc": "2.0", "id":"%d", "method": "%s", "params": %s }'
                 % (self._id, endpoint, json.dumps(args)))
         _logger.info(data)
-        _logger.debug("hi")
         async with self.session.post(self.url, data=data) as resp:
             if resp.status == 200:
                 r = await resp.json()
