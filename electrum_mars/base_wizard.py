@@ -435,8 +435,6 @@ class BaseWizard(Logger):
             default_choice_idx = 2
             choices = [
                 ('standard',    'legacy (p2pkh)',            bip44_derivation(0, bip43_purpose=44)),
-                ('p2wpkh-p2sh', 'p2sh-segwit (p2wpkh-p2sh)', bip44_derivation(0, bip43_purpose=49)),
-                ('p2wpkh',      'native segwit (p2wpkh)',    bip44_derivation(0, bip43_purpose=84)),
             ]
         while True:
             try:
@@ -510,7 +508,7 @@ class BaseWizard(Logger):
         self.opt_bip39 = True
         self.opt_slip39 = True
         self.opt_ext = True
-        is_cosigning_seed = lambda x: mnemonic.seed_type(x) in ['standard', 'segwit']
+        is_cosigning_seed = lambda x: mnemonic.seed_type(x) in ['standard']
         test = mnemonic.is_seed if self.wallet_type == 'standard' else is_cosigning_seed
         f = lambda *args: self.run('on_restore_seed', *args)
         self.restore_seed_dialog(run_next=f, test=test)
@@ -554,8 +552,6 @@ class BaseWizard(Logger):
 
     def create_keystore(self, seed, passphrase):
         k = keystore.from_seed(seed, passphrase, self.wallet_type == 'multisig')
-        if k.can_have_deterministic_lightning_xprv():
-            self.data['lightning_xprv'] = k.get_lightning_xprv(None)
         self.on_keystore(k)
 
     def on_bip43(self, root_seed, derivation, script_type):
@@ -574,7 +570,7 @@ class BaseWizard(Logger):
         if has_xpub:
             t1 = xpub_type(k.xpub)
         if self.wallet_type == 'standard':
-            if has_xpub and t1 not in ['standard', 'p2wpkh', 'p2wpkh-p2sh']:
+            if has_xpub and t1 not in ['standard']:
                 self.show_error(_('Wrong key type') + ' %s'%t1)
                 self.run('choose_keystore')
                 return
@@ -582,7 +578,7 @@ class BaseWizard(Logger):
             self.run('create_wallet')
         elif self.wallet_type == 'multisig':
             assert has_xpub
-            if t1 not in ['standard', 'p2wsh', 'p2wsh-p2sh']:
+            if t1 not in ['standard']:
                 self.show_error(_('Wrong key type') + ' %s'%t1)
                 self.run('choose_keystore')
                 return
@@ -697,7 +693,7 @@ class BaseWizard(Logger):
         self.show_xpub_dialog(xpub=xpub, run_next=lambda x: self.run('choose_keystore'))
 
     def choose_seed_type(self):
-        seed_type = 'standard' if self.config.get('nosegwit') else 'segwit'
+        seed_type = 'standard'
         self.create_seed(seed_type)
 
     def create_seed(self, seed_type):

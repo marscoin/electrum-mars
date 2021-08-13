@@ -310,6 +310,7 @@ class Blockchain(Logger):
             raise Exception("prev hash mismatch: %s vs %s" % (prev_hash, header.get('prev_block_hash')))
         if constants.net.TESTNET:
             return
+
         bits = cls.target_to_bits(target)
         if bits != header.get('bits'):
             raise Exception("bits mismatch: %s vs %s" % (bits, header.get('bits')))
@@ -516,7 +517,8 @@ class Blockchain(Logger):
             return constants.net.GENESIS
         elif is_height_checkpoint():
             index = height // 2016
-            h, t, _ = self.checkpoints[index]
+            #h, t, _ = self.checkpoints[index]
+            h, t = self.checkpoints[index]
             return h
         else:
             header = self.read_header(height)
@@ -538,7 +540,9 @@ class Blockchain(Logger):
         if index == -1:
             return 0x00000FFFF0000000000000000000000000000000000000000000000000000000
         if index < len(self.checkpoints):
-            h, t, _ = self.checkpoints[index]
+            #h, t, _ = self.checkpoints[index]
+            h, t = self.checkpoints[index]
+
             return t
         # new target
         # Marscoin: go back the full period unless it's the first retarget
