@@ -753,15 +753,14 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         help_menu.addAction(_("&Documentation"), lambda: webopen("http://docs.electrum.org/")).setShortcut(QKeySequence.HelpContents)
         help_menu.addAction(_("&Report Bug"), self.show_report_bug)
         help_menu.addSeparator()
-        help_menu.addAction(_("&Donate to server"), self.donate_to_server)
+        help_menu.addAction(_("&Donate to Development Fund"), self.donate_to_server)
 
         self.setMenuBar(menubar)
 
     def donate_to_server(self):
-        d = self.network.get_donation_address()
+        d = "MFCah7R6J5q5KC8rLhDRrndh1ZhL4ampo4"
         if d:
-            host = self.network.get_parameters().server.host
-            self.pay_to_URI('marscoin:%s?message=donation for %s'%(d, host))
+            self.pay_to_URI('marscoin:%s?message=donation for Development Fund'%(d))
         else:
             self.show_error(_('No donation address for this server'))
 
@@ -1074,8 +1073,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         self.clear_invoice_button = QPushButton(_('Clear'))
         self.clear_invoice_button.clicked.connect(self.clear_receive_tab)
         self.create_invoice_button = QPushButton(_('New Address'))
-        self.create_invoice_button.setIcon(read_QIcon("bitcoin.png"))
-        self.create_invoice_button.setToolTip('Create on-chain request')
+        self.create_invoice_button.setIcon(read_QIcon("marscoin.png"))
+        self.create_invoice_button.setToolTip('Create new receiving address')
         self.create_invoice_button.clicked.connect(lambda: self.create_invoice(False))
         self.receive_buttons = buttons = QHBoxLayout()
         buttons.addStretch(1)
