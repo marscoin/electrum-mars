@@ -20,8 +20,8 @@ from electrum_mars.network import Network
 
 
 class UpdateCheck(QDialog, Logger):
-    url = "https://electrum-mars.org/version"
-    download_url = "https://electrum-mars.org/#download"
+    url = "https://marscoin.org/electrum/version"
+    download_url = "https://marscoin.org/electrum#download"
 
     VERSION_ANNOUNCEMENT_SIGNING_KEYS = (
         "LWZzbv5SbiRRjBDL6dUYRdBX9Dp89RDZgG",
@@ -29,7 +29,7 @@ class UpdateCheck(QDialog, Logger):
 
     def __init__(self, *, latest_version=None):
         QDialog.__init__(self)
-        self.setWindowTitle('Electrum-MARS - ' + _('Update Check'))
+        self.setWindowTitle('Marscoin Electrum Edition - ' + _('Update Check'))
         self.content = QVBoxLayout()
         self.content.setContentsMargins(*[10]*4)
 

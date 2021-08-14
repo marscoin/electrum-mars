@@ -137,7 +137,7 @@ class ElectrumGui(Logger):
 
     def _init_tray(self):
         self.tray = QSystemTrayIcon(self.tray_icon(), None)
-        self.tray.setToolTip('Electrum-MARS')
+        self.tray.setToolTip('Marscoin Electrum Edition')
         self.tray.activated.connect(self.tray_activated)
         self.build_tray_menu()
         self.tray.show()
