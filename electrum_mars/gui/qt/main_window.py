@@ -694,12 +694,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
         contacts_menu.addAction(_("&New"), self.new_contact_dialog)
         contacts_menu.addAction(_("Import"), lambda: self.import_contacts())
         contacts_menu.addAction(_("Export"), lambda: self.export_contacts())
-        invoices_menu = wallet_menu.addMenu(_("Invoices"))
-        invoices_menu.addAction(_("Import"), lambda: self.import_invoices())
-        invoices_menu.addAction(_("Export"), lambda: self.export_invoices())
-        requests_menu = wallet_menu.addMenu(_("Requests"))
-        requests_menu.addAction(_("Import"), lambda: self.import_requests())
-        requests_menu.addAction(_("Export"), lambda: self.export_requests())
 
         wallet_menu.addSeparator()
         wallet_menu.addAction(_("Find"), self.toggle_search).setShortcut(QKeySequence("Ctrl+F"))
@@ -2429,8 +2423,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
             grid.addWidget(QLabel(_("Keystore type") + ':'), 4, 0)
             ks_type = str(keystore_types[0]) if keystore_types else _('No keystore')
             grid.addWidget(QLabel(ks_type), 4, 1)
-        # lightning
-        grid.addWidget(QLabel(_('Lightning') + ':'), 5, 0)
         from .util import IconLabel
         if self.wallet.has_lightning():
             if self.wallet.lnworker.has_deterministic_node_id():

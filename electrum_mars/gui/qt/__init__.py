@@ -144,7 +144,7 @@ class ElectrumGui(Logger):
 
 
     def flashSplash(self):
-        self.splash = QSplashScreen(QPixmap('/Users/llopin/Projects/electrum-mars/electrum_mars/gui/icons/splash.png'))
+        self.splash = QSplashScreen(QPixmap('../icons/splash.png'))
         # By default, SplashScreen will be in the center of the screen.
         # You can move it to a specific location if you want:
         # self.splash.move(10,10)
