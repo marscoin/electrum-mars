@@ -109,7 +109,7 @@ class SimpleConfig(Logger):
             decimal_point_to_base_unit_name(self.decimal_point)
         except UnknownBaseUnit:
             self.decimal_point = DECIMAL_POINT_DEFAULT
-        self.num_zeros = int(self.get('num_zeros', 0))
+        self.num_zeros = int(self.get('num_zeros', 8))
         self.amt_precision_post_satoshi = int(self.get('amt_precision_post_satoshi', 0))
         self.amt_add_thousands_sep = bool(self.get('amt_add_thousands_sep', False))
 
