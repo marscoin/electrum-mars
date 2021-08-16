@@ -332,7 +332,8 @@ class Blockchain(Logger):
         num = len(data) // HEADER_SIZE
         start_height = index * 2016
         prev_hash = self.get_hash(start_height - 1)
-        target = self.get_target(index-1)
+        chunk_headers = {'empty': True}
+
         for i in range(num):
             height = start_height + i
             try:
@@ -340,8 +341,16 @@ class Blockchain(Logger):
             except MissingHeader:
                 expected_header_hash = None
             raw_header = data[i*HEADER_SIZE : (i+1)*HEADER_SIZE]
-            header = deserialize_header(raw_header, index*2016 + i)
+            height = index * 2016 + i
+            header = deserialize_header(raw_header, height)
+            target = self.get_target(height, chunk_headers)
             self.verify_header(header, prev_hash, target, expected_header_hash)
+
+            chunk_headers[height] = header
+            if i == 0:
+                chunk_headers['min_height'] = height
+                chunk_headers['empty'] = False
+            chunk_headers['max_height'] = height
             prev_hash = hash_header(header)
 
     @with_lock
@@ -650,8 +659,8 @@ class Blockchain(Logger):
 
     def chainwork_of_header_at_height(self, height: int) -> int:
         """work done by single header at given height"""
-        #chunk_idx = height // 2016 - 1
-        chunk_idx = height
+        chunk_idx = height // 2016 - 1
+        #chunk_idx = height
 
         target = self.get_target(chunk_idx)
         work = ((2 ** 256 - target - 1) // (target + 1)) + 1
@@ -728,11 +737,22 @@ class Blockchain(Logger):
         cp = []
         n = self.height() // 2016
         for index in range(n):
-            h = self.get_hash((index+1) * 2016 -1)
-            target = self.get_target(index)
-            # Marscoin: also store the timestamp of the last block
-            tstamp = self.get_timestamp((index+1) * 2016 - 1)
-            cp.append((h, target, tstamp))
+            height = (index + 1) * 2016 -1
+            h = self.get_hash(height)
+            target = self.get_target(height)
+            if len(h.strip('0')) == 0:
+                raise Exception('%s file has not enough data.' % self.path())
+            dgw3_headers = []
+            if os.path.exists(self.path()):
+                with open(self.path(), 'rb') as f:
+                    lower_header = height - DGW_PAST_BLOCKS
+                    for height in range(height, lower_header-1, -1):
+                        f.seek(height*80)
+                        hd = f.read(80)
+                        if len(hd) < 80:
+                            raise Exception('Expected to read a full header.' 'This was only {} bytes'.format(len(hd)))
+                        dgw3_headers.append((height, bh2u(hd)))
+            cp.append((h, target, dgw3_headers))
         return cp
 
 
