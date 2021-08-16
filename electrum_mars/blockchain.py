@@ -179,9 +179,9 @@ def init_headers_file_for_best_chain():
     length = HEADER_SIZE * len(constants.net.CHECKPOINTS) * 2016
     if not os.path.exists(filename) or os.path.getsize(filename) < length:
         with open(filename, 'wb') as f:
-            # if length > 0:
-            #     f.seek(length - 1)
-            #     f.write(b'\x00')
+            #if length > 0:
+            #    f.seek(length - 1)
+            #    f.write(b'\x00')
             for i in range(len_checkpoints):
                 # this will depend on new checkpoints file
                 for height, header_data in b.checkpoints[i][2]:
@@ -320,7 +320,7 @@ class Blockchain(Logger):
         if constants.net.TESTNET:
             return
         #TODO Until DGW implementation, just return otherwise fails here
-        return
+        #return
         bits = cls.target_to_bits(target)
         if bits != header.get('bits'):
             raise Exception("bits mismatch: %s vs %s" % (bits, header.get('bits')))
@@ -528,7 +528,7 @@ class Blockchain(Logger):
         elif is_height_checkpoint():
             index = height // 2016
             #h, t, _ = self.checkpoints[index]
-            h, t = self.checkpoints[index]
+            h, t, extra_headers = self.checkpoints[index]
             return h
         else:
             header = self.read_header(height)
@@ -612,7 +612,7 @@ class Blockchain(Logger):
         target_timespan = DGW_PAST_BLOCKS * POW_TARGET_SPACING
 
         if actual_timespan < target_timespan // 3:
-            actual_timespan = target_timespan //3
+            actual_timespan = target_timespan // 3
         if actual_timespan > target_timespan * 3:
             actual_timespan = target_timespan * 3
 
@@ -623,6 +623,7 @@ class Blockchain(Logger):
             return MAX_TARGET
 
         new_target = self.bits_to_target(self.target_to_bits(new_target))
+        #return MAX_TARGET
         return new_target
 
 
@@ -693,12 +694,13 @@ class Blockchain(Logger):
             return hash_header(header) == constants.net.GENESIS
         try:
             prev_hash = self.get_hash(height - 1)
-        except:
+        except Exception as e:
+            print(e)
             return False
         if prev_hash != header.get('prev_block_hash'):
             return False
         try:
-            return True
+            #return True
             #TODO await DGW implementation
             # target = self.get_target(height // 2016 - 1)
             target = self.get_target(height)
