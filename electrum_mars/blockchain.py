@@ -310,7 +310,7 @@ class Blockchain(Logger):
             raise Exception("prev hash mismatch: %s vs %s" % (prev_hash, header.get('prev_block_hash')))
         if constants.net.TESTNET:
             return
-        #Until DGW implementation, just return otherwise fails here
+        #TODO Until DGW implementation, just return otherwise fails here
         return
         bits = cls.target_to_bits(target)
         if bits != header.get('bits'):
@@ -632,6 +632,8 @@ class Blockchain(Logger):
         if prev_hash != header.get('prev_block_hash'):
             return False
         try:
+            return True
+            #TODO await DGW implementation
             target = self.get_target(height // 2016 - 1)
         except MissingHeader:
             return False
