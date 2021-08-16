@@ -319,8 +319,7 @@ class Blockchain(Logger):
             raise Exception("prev hash mismatch: %s vs %s" % (prev_hash, header.get('prev_block_hash')))
         if constants.net.TESTNET:
             return
-        #TODO Until DGW implementation, just return otherwise fails here
-        #return
+        
         bits = cls.target_to_bits(target)
         if bits != header.get('bits'):
             raise Exception("bits mismatch: %s vs %s" % (bits, header.get('bits')))
@@ -553,36 +552,8 @@ class Blockchain(Logger):
         return self.read_header(height).get('timestamp')
 
     def get_target(self, height: int, chunk_headers: Optional[dict]=None) -> int:
-        # compute target from chunk x, used in chunk x+1
-        # if constants.net.TESTNET:
-        #     return 0
-        # if index == -1:
-        #     return 0x00000FFFF0000000000000000000000000000000000000000000000000000000
-        # if index < len(self.checkpoints):
-        #     #h, t, _ = self.checkpoints[index]
-        #     h, t = self.checkpoints[index]
-        #
-        #     return t
-        # # new target
-        # # Marscoin: go back the full period unless it's the first retarget
-        # first_timestamp = self.get_timestamp(index * 2016 - 1 if index > 0 else 0)
-        # last = self.read_header(index * 2016 + 2015)
-        # if not first_timestamp or not last:
-        #     raise MissingHeader()
-        # bits = last.get('bits')
-        # target = self.bits_to_target(bits)
-        # nActualTimespan = last.get('timestamp') - first_timestamp
-        # nTargetTimespan = 84 * 60 * 60
-        # nActualTimespan = max(nActualTimespan, nTargetTimespan // 4)
-        # nActualTimespan = min(nActualTimespan, nTargetTimespan * 4)
-        # new_target = min(MAX_TARGET, (target * nActualTimespan) // nTargetTimespan)
-        # # not any target can be represented in 32 bits:
-        # new_target = self.bits_to_target(self.target_to_bits(new_target))
-        # return new_target
-
-        # DGW target calculation under here
-        # For now, treat every block as having a DGW target
         # TODO: check height to use different target algo so clients can sync from beggining
+        # Do we need to do this?
 
         if chunk_headers is None:
             chunk_headers = {'empty': True}
@@ -632,7 +603,6 @@ class Blockchain(Logger):
             return MAX_TARGET
 
         new_target = self.bits_to_target(self.target_to_bits(new_target))
-        #return MAX_TARGET
         return new_target
 
 
@@ -709,9 +679,6 @@ class Blockchain(Logger):
         if prev_hash != header.get('prev_block_hash'):
             return False
         try:
-            #return True
-            #TODO await DGW implementation
-            # target = self.get_target(height // 2016 - 1)
             target = self.get_target(height)
         except MissingHeader:
             return False
