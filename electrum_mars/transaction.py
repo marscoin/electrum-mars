@@ -548,7 +548,7 @@ class Transaction:
         self._inputs = None  # type: List[TxInput]
         self._outputs = None  # type: List[TxOutput]
         self._locktime = 0
-        self._version = 2
+        self._version = 1
 
         self._cached_txid = None  # type: Optional[str]
 

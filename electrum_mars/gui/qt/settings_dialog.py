@@ -501,7 +501,6 @@ class SettingsDialog(WindowModalDialog):
         tabs_info = [
             (gui_widgets, _('General')),
             (tx_widgets, _('Transactions')),
-            (lightning_widgets, _('Lightning')),
             (fiat_widgets, _('Fiat')),
             (oa_widgets, _('OpenAlias')),
         ]

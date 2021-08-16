@@ -36,8 +36,8 @@ try:
 except Exception:
     sys.exit("Error: Could not import PyQt5 on Linux systems, you may try 'sudo apt-get install python3-pyqt5'")
 
-from PyQt5.QtGui import QGuiApplication
-from PyQt5.QtWidgets import (QApplication, QSystemTrayIcon, QWidget, QMenu,
+from PyQt5.QtGui import QGuiApplication, QPixmap
+from PyQt5.QtWidgets import (QApplication, QSystemTrayIcon, QWidget, QMenu, QSplashScreen,
                              QMessageBox)
 from PyQt5.QtCore import QObject, pyqtSignal, QTimer, Qt
 import PyQt5.QtCore as QtCore
@@ -120,8 +120,8 @@ class ElectrumGui(Logger):
         # timer
         self.timer = QTimer(self.app)
         self.timer.setSingleShot(False)
-        self.timer.setInterval(500)  # msec
-
+        self.timer.setInterval(5000)  # msec
+        self.flashSplash()
         self.network_dialog = None
         self.lightning_dialog = None
         self.watchtower_dialog = None
@@ -137,10 +137,22 @@ class ElectrumGui(Logger):
 
     def _init_tray(self):
         self.tray = QSystemTrayIcon(self.tray_icon(), None)
-        self.tray.setToolTip('Electrum-MARS')
+        self.tray.setToolTip('Marscoin Electrum Edition')
         self.tray.activated.connect(self.tray_activated)
         self.build_tray_menu()
         self.tray.show()
+
+
+    def flashSplash(self):
+        path = os.path.dirname(os.path.abspath(__file__))
+        pixmap = QPixmap(os.path.join(path, "../icons/splash.png"))
+        self.splash = QSplashScreen(pixmap)
+        # By default, SplashScreen will be in the center of the screen.
+        # You can move it to a specific location if you want:
+        # self.splash.move(10,10)
+        self.splash.show()
+        # Close SplashScreen after 2 seconds (2000 ms)
+        QTimer.singleShot(5000, self.splash.close)
 
     def set_dark_theme_if_needed(self):
         use_dark_theme = self.config.get('qt_gui_color_theme', 'default') == 'dark'

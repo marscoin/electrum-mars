@@ -777,50 +777,22 @@ def time_difference(distance_in_time, include_seconds):
         return "over %d years" % (round(distance_in_minutes / 525600))
 
 mainnet_block_explorers = {
-    'Bchain.info': ('https://bchain.info/',
-                        {'tx': 'MARS/tx/', 'addr': 'MARS/addr/'}),
-    'Bitaps.com': ('https://mars.bitaps.com/',
-                        {'tx': '', 'addr': ''}),
-    'Bitupper Explorer': ('https://bitupper.com/en/explorer/marscoin/',
-                        {'tx': 'transactions/', 'addr': 'addresses/'}),
-    'Blockchair.com': ('https://blockchair.com/marscoin/',
-                        {'tx': 'transaction/', 'addr': 'address/'}),
-    'Blockchair.com (Tor)': ('http://blkchairbknpn73cfjhevhla7rkp4ed5gg2knctvv7it4lioy22defid.onion/marscoin/',
-                        {'tx': 'transaction/', 'addr': 'address/'}),
-    'BlockCypher.com': ('https://live.blockcypher.com/mars/',
+    'Marssight': ('https://explore.marscoin.org/',
                         {'tx': 'tx/', 'addr': 'address/'}),
-    'explorer.marscoin.net': ('http://explorer.marscoin.net/',
+    'Mirror 1': ('https://explore1.marscoin.org/',
                         {'tx': 'tx/', 'addr': 'address/'}),
-    'LiteCore': ('https://insight.litecore.io/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
-    'SoChain': ('https://chain.so/',
-                        {'tx': 'tx/MARS/', 'addr': 'address/MARS/'}),
-    'system default': ('blockchain://12a765e31ffd4059bada1e25190f6e98c99d9714d334efa41a195a7e7e04bfe2/',
+    'Mirror 2': ('https://explore2.marscoin.org/',
                         {'tx': 'tx/', 'addr': 'address/'}),
 }
 
 testnet_block_explorers = {
-    'Bitaps.com': ('https://tmars.bitaps.com/',
-                       {'tx': '', 'addr': ''}),
-    'LiteCore': ('https://testnet.litecore.io/',
+    'Testnet Marssight': ('https://testnet.marscoin.org/',
                         {'tx': 'tx/', 'addr': 'address/'}),
-    'SoChain': ('https://chain.so/',
-                        {'tx': 'tx/MARSTEST/', 'addr': 'address/MARSTEST/'}),
-    'system default': ('blockchain://4966625a4b2851d9fdee139e56211a0d88575f59ed816ff5e6a63deb4e3e29a0/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
 }
 
 signet_block_explorers = {
-    'bc-2.jp': ('https://explorer.bc-2.jp/',
-                        {'tx': 'tx/', 'addr': 'address/'}),
     'mempool.space': ('https://mempool.space/signet/',
                         {'tx': 'tx/', 'addr': 'address/'}),
-    'bitcoinexplorer.org': ('https://signet.bitcoinexplorer.org/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
-    'wakiyamap.dev': ('https://signet-explorer.wakiyamap.dev/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
-    'system default': ('blockchain:/',
-                       {'tx': 'tx/', 'addr': 'address/'}),
 }
 
 _block_explorer_default_api_loc = {'tx': 'tx/', 'addr': 'address/'}
