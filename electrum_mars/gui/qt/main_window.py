@@ -754,7 +754,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger):
     def donate_to_server(self):
         d = "MFCah7R6J5q5KC8rLhDRrndh1ZhL4ampo4"
         if d:
-            self.pay_to_URI('marscoin:%s?message=donation for Development Fund'%(d))
+            self.pay_to_URI('marscoin:%s?message=Donation to Development Fund'%(d))
         else:
             self.show_error(_('No donation address for this server'))
 

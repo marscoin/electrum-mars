@@ -197,9 +197,9 @@ class ElectrumGui(Logger):
 
     def tray_icon(self):
         if self.dark_icon:
-            return read_QIcon('electrum_dark_icon.png')
+            return read_QIcon('marscoin_32x32.png')
         else:
-            return read_QIcon('electrum_light_icon.png')
+            return read_QIcon('marscoin_32x32.png')
 
     def toggle_tray_icon(self):
         if not self.tray:
