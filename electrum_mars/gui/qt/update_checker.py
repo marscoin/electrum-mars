@@ -24,7 +24,7 @@ class UpdateCheck(QDialog, Logger):
     download_url = "https://marscoin.org/electrum#download"
 
     VERSION_ANNOUNCEMENT_SIGNING_KEYS = (
-        "LWZzbv5SbiRRjBDL6dUYRdBX9Dp89RDZgG",
+        "MT2cegJzUw9WgCqztDUcyUeU62pHXbuEMg",
     )
 
     def __init__(self, *, latest_version=None):
