@@ -421,10 +421,7 @@ def p2wsh_nested_script(witness_script: str) -> str:
 
 def pubkey_to_address(txin_type: str, pubkey: str, *, net=None) -> str:
     if net is None: net = constants.net
-    if txin_type == 'p2sh':
-        # given scriptcode is a redeem_script
-        return hash160_to_p2sh(hash_160(bfh(scriptcode)), net=net)
-    elif txin_type == 'p2pkh':
+    if txin_type == 'p2pkh':
         return public_key_to_p2pkh(bfh(pubkey), net=net)
     elif txin_type == 'p2wpkh':
         return public_key_to_p2wpkh(bfh(pubkey), net=net)
