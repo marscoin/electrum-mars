@@ -421,7 +421,10 @@ def p2wsh_nested_script(witness_script: str) -> str:
 
 def pubkey_to_address(txin_type: str, pubkey: str, *, net=None) -> str:
     if net is None: net = constants.net
-    if txin_type == 'p2pkh':
+    if txin_type == 'p2sh':
+        # given scriptcode is a redeem_script
+        return hash160_to_p2sh(hash_160(bfh(scriptcode)), net=net)
+    elif txin_type == 'p2pkh':
         return public_key_to_p2pkh(bfh(pubkey), net=net)
     elif txin_type == 'p2wpkh':
         return public_key_to_p2wpkh(bfh(pubkey), net=net)
@@ -632,10 +635,10 @@ def DecodeBase58Check(psz: Union[bytes, str]) -> bytes:
 # extended WIF for segwit (used in 3.0.x; but still used internally)
 # the keys in this dict should be a superset of what Imported Wallets can import
 WIF_SCRIPT_TYPES = {
-    'p2pkh':48,
+    'p2pkh':50,
     'p2wpkh':1,
     'p2wpkh-p2sh':2,
-    'p2sh':50,
+    'p2sh':52,
     'p2wsh':6,
     'p2wsh-p2sh':7
 }
