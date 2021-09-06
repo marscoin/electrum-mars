@@ -46,6 +46,7 @@ _logger = get_logger(__name__)
 HEADER_SIZE = 80  # bytes
 MAX_TARGET = 0x00000FFFFF000000000000000000000000000000000000000000000000000000
 DGW_PAST_BLOCKS = 24
+POW_DGW3_HEIGHT = 126000
 #POW_TARGET_SPACING = int(2.5 * 60)
 POW_TARGET_SPACING = 123
 
@@ -319,6 +320,10 @@ class Blockchain(Logger):
             raise Exception("prev hash mismatch: %s vs %s" % (prev_hash, header.get('prev_block_hash')))
         if constants.net.TESTNET:
             return
+
+        height = header.get('block_height')
+        if height < POW_DGW3_HEIGHT:
+            return
         
         bits = cls.target_to_bits(target)
         if bits != header.get('bits'):
@@ -557,9 +562,10 @@ class Blockchain(Logger):
 
         if chunk_headers is None:
             chunk_headers = {'empty': True}
-
-        return self.get_target_dgw_v3(height, chunk_headers)
-
+        if height >= POW_DGW3_HEIGHT:
+            return self.get_target_dgw_v3(height, chunk_headers)
+        else:
+            return MAX_TARGET
 
     def get_target_dgw_v3(self, height: int, chunk_headers: Optional[dict]) -> int:
         if chunk_headers['empty']:

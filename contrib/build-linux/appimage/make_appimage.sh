@@ -81,7 +81,7 @@ MKSQUASHFS="$BUILDDIR/squashfskit/squashfs-tools/mksquashfs"
 
 
 "$CONTRIB"/make_libsecp256k1.sh || fail "Could not build libsecp"
-cp -f "$PROJECT_ROOT/electrum-mars/libsecp256k1.so.0" "$APPDIR/usr/lib/libsecp256k1.so.0" || fail "Could not copy libsecp to its destination"
+cp -f "$PROJECT_ROOT/electrum_mars/libsecp256k1.so.0" "$APPDIR/usr/lib/libsecp256k1.so.0" || fail "Could not copy libsecp to its destination"
 
 
 appdir_python() {
@@ -149,7 +149,7 @@ cp "/usr/lib/x86_64-linux-gnu/libzbar.so.0" "$APPDIR/usr/lib/libzbar.so.0"
 
 info "desktop integration."
 cp "$PROJECT_ROOT/electrum-mars.desktop" "$APPDIR/electrum-mars.desktop"
-cp "$PROJECT_ROOT/electrum-mars/gui/icons/electrum-mars.png" "$APPDIR/electrum-mars.png"
+cp "$PROJECT_ROOT/electrum_mars/gui/icons/electrum-mars.png" "$APPDIR/electrum-mars.png"
 
 
 # add launcher
