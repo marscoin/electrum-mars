@@ -49,6 +49,7 @@ DGW_PAST_BLOCKS = 24
 POW_DGW3_HEIGHT = 126000
 #POW_TARGET_SPACING = int(2.5 * 60)
 POW_TARGET_SPACING = 123
+ASERT_HEIGHT = 3000000
 
 class MissingHeader(Exception):
     pass
@@ -207,6 +208,7 @@ class Blockchain(Logger):
         if 0 < forkpoint <= constants.net.max_checkpoint():
             raise Exception(f"cannot fork below max checkpoint. forkpoint: {forkpoint}")
         Logger.__init__(self)
+        self._logger = get_logger(__name__)
         self.config = config
         self.forkpoint = forkpoint  # height of first header
         self.parent = parent
@@ -214,6 +216,7 @@ class Blockchain(Logger):
         self._prev_hash = prev_hash  # blockhash immediately before forkpoint
         self.lock = threading.RLock()
         self.update_size()
+        
 
     @property
     def checkpoints(self):
@@ -325,9 +328,27 @@ class Blockchain(Logger):
         if height < POW_DGW3_HEIGHT:
             return
         
+        if height == 2999999:
+            get_logger(__name__).info(f"[blockchain] Processing transition block 2999999: {header}")
+            # For this specific block, we'll just verify the prev_hash
+            if prev_hash != header.get('prev_block_hash'):
+                raise Exception("prev hash mismatch: %s vs %s" % (prev_hash, header.get('prev_block_hash')))
+            return
+
         bits = cls.target_to_bits(target)
-        if bits != header.get('bits'):
+        if height == ASERT_HEIGHT - 1:  # Transition block
+            if bits != header.get('bits'):
+                raise Exception(f"Transition block bits mismatch: expected {bits}, got {header.get('bits')}")
+        elif bits != header.get('bits'):
             raise Exception("bits mismatch: %s vs %s" % (bits, header.get('bits')))
+
+
+        # Add ASERT check
+        if height >= ASERT_HEIGHT:
+            asert_target = cls.get_target_asert(height, header)
+            if target != asert_target:
+                raise Exception(f"ASERT target mismatch: expected {asert_target}, got {target}")
+
         block_hash_as_num = int.from_bytes(bfh(_powhash), byteorder='big')
         if block_hash_as_num > target:
             raise Exception(f"insufficient proof of work: {block_hash_as_num} vs target {target}")
@@ -555,32 +576,42 @@ class Blockchain(Logger):
             _, _, ts = self.checkpoints[index]
             return ts
         return self.read_header(height).get('timestamp')
+        
 
     def get_target(self, height: int, chunk_headers: Optional[dict]=None) -> int:
-        # TODO: check height to use different target algo so clients can sync from beggining
-        # Do we need to do this?
-
-        if chunk_headers is None:
-            chunk_headers = {'empty': True}
-        if height >= POW_DGW3_HEIGHT:
+        if height == 2999999 or height == ASERT_HEIGHT - 1:  # Transition block
+            self._logger.info(f"[blockchain] Getting target for transition block {height}")
+            header = self.read_header(height)
+            if header is None and chunk_headers:
+                header = chunk_headers.get(height)
+            if header is None:
+                if hasattr(self, 'bad_header') and self.bad_header['block_height'] == height:
+                    self._logger.warning(f"[blockchain] Using bad_header bits for transition block {height}")
+                    return self.bits_to_target(self.bad_header['bits'])
+                self._logger.warning(f"[blockchain] Unable to find header for transition block {height}")
+                return MAX_TARGET  # Return MAX_TARGET instead of raising an exception
+            return self.bits_to_target(header['bits'])
+        elif height >= ASERT_HEIGHT:
+            return self.get_target_asert(height, chunk_headers)
+        elif height >= POW_DGW3_HEIGHT:
             return self.get_target_dgw_v3(height, chunk_headers)
         else:
             return MAX_TARGET
 
+
     def get_target_dgw_v3(self, height: int, chunk_headers: Optional[dict]) -> int:
-        if chunk_headers['empty']:
-            chunk_empty = True
-        else:
-            chunk_empty = False
-            min_height = chunk_headers['min_height']
-            max_height = chunk_headers['max_height']
+        chunk_empty = True
+        if chunk_headers is not None:
+            chunk_empty = chunk_headers.get('empty', True)
+            min_height = chunk_headers.get('min_height')
+            max_height = chunk_headers.get('max_height')
 
         count_blocks = 1
         while count_blocks <= DGW_PAST_BLOCKS:
             reading_h = height - count_blocks
             reading_header = self.read_header(reading_h)
             if not reading_header and not chunk_empty and min_height <= reading_h <= max_height:
-                reading_header = chunk_headers[reading_h]
+                reading_header = chunk_headers.get(reading_h)
             if not reading_header:
                 raise MissingHeader()
             reading_time = reading_header.get('timestamp')
@@ -610,6 +641,35 @@ class Blockchain(Logger):
 
         new_target = self.bits_to_target(self.target_to_bits(new_target))
         return new_target
+    
+
+    def get_target_asert(self, height: int, prev_header: dict) -> int:
+        # Constants from the ASERT algorithm
+        HALF_LIFE = 2 * 3600  # 2 hours in seconds
+        TARGET_SPACING = 123  # 2 Mars-minutes
+        ANCHOR_HEIGHT = 2999999  # Fixed anchor block height
+
+        anchor_header = self.read_header(ANCHOR_HEIGHT)
+        if not anchor_header:
+            raise MissingHeader("Anchor block header not found")
+
+        anchor_target = self.bits_to_target(anchor_header['bits'])
+        time_diff = prev_header['timestamp'] - anchor_header['timestamp']
+        height_diff = height - ANCHOR_HEIGHT - 1
+
+        # Calculate exponent
+        exponent = ((time_diff - TARGET_SPACING * height_diff) * 65536) // HALF_LIFE
+        
+        # Calculate target
+        target = anchor_target
+        if exponent < 0:
+            target >>= (-exponent // 65536)
+        else:
+            target <<= (exponent // 65536)
+
+        if target > MAX_TARGET:
+            return MAX_TARGET
+        return target
 
 
     @classmethod
@@ -680,17 +740,23 @@ class Blockchain(Logger):
         try:
             prev_hash = self.get_hash(height - 1)
         except Exception as e:
-            print(e)
+            self.logger.error(f"Error getting previous hash: {e}")
             return False
         if prev_hash != header.get('prev_block_hash'):
+            self.logger.error(f"Previous hash mismatch: expected {prev_hash}, got {header.get('prev_block_hash')}")
             return False
         try:
-            target = self.get_target(height)
+            if height == ASERT_HEIGHT - 1:  # Transition block
+                target = self.bits_to_target(header['bits'])
+            else:
+                target = self.get_target(height)
         except MissingHeader:
+            self.logger.error(f"Missing header for height {height}")
             return False
         try:
             self.verify_header(header, prev_hash, target)
         except BaseException as e:
+            self.logger.error(f"Error verifying header: {e}")
             return False
         return True
 

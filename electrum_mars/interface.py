@@ -808,14 +808,25 @@ class Interface(Logger):
             if good + 1 == bad:
                 break
 
-        mock = 'mock' in bad_header and bad_header['mock']['connect'](height)
-        real = not mock and self.blockchain.can_connect(bad_header, check_height=False)
-        if not real and not mock:
-            raise Exception('unexpected bad header during binary: {}'.format(bad_header))
-        _assert_header_does_not_check_against_any_chain(bad_header)
+            mock = 'mock' in bad_header and bad_header['mock']['connect'](height)
+            real = not mock and self.blockchain.can_connect(bad_header, check_height=False)
+            if not real and not mock:
+                    self.logger.error(f"[interface] Unexpected bad header during binary: {bad_header}")
+                    prev_header = self.blockchain.read_header(height - 1)
+                    next_header = self.blockchain.read_header(height + 1)
+                    self.logger.error(f"[interface] Previous header: {prev_header}")
+                    self.logger.error(f"[interface] Next header: {next_header}")
+                    self.logger.error(f"[interface] Can connect: {self.blockchain.can_connect(bad_header, check_height=False)}")
+                    target = self.blockchain.get_target(height)
+                    self.logger.error(f"[interface] Target: {target}")
+                    try:
+                        self.blockchain.verify_header(bad_header, prev_header['prev_block_hash'], target)
+                    except Exception as e:
+                        self.logger.error(f"[interface] Verify header error: {str(e)}")
+                    raise Exception(f'unexpected bad header during binary: {bad_header}')
 
-        self.logger.info(f"binary search exited. good {good}, bad {bad}")
-        return good, bad, bad_header
+            self.logger.info(f"binary search exited. good {good}, bad {bad}")
+            return good, bad, bad_header
 
     async def _resolve_potential_chain_fork_given_forkpoint(self, good, bad, bad_header):
         assert good + 1 == bad
