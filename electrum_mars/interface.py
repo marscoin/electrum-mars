@@ -788,33 +788,85 @@ class Interface(Logger):
         return await self._resolve_potential_chain_fork_given_forkpoint(good, bad, bad_header)
 
     async def _search_headers_binary(self, height, bad, bad_header, chain):
-        assert bad == bad_header['block_height']
+        self.logger.info(f"Entering _search_headers_binary: height={height}, bad={bad}")
+        assert bad == bad_header['block_height'], f"Mismatch: bad={bad}, bad_header['block_height']={bad_header['block_height']}"
         _assert_header_does_not_check_against_any_chain(bad_header)
 
+        self.logger.debug(f"Initial chain: {chain}")
         self.blockchain = chain if isinstance(chain, Blockchain) else self.blockchain
+        self.logger.debug(f"Set blockchain: {self.blockchain}")
+
         good = height
+        self.logger.info(f"Initial state: good={good}, bad={bad}")
+
         while True:
-            assert good < bad, (good, bad)
+            assert good < bad, f"Invariant violated: good ({good}) should be less than bad ({bad})"
             height = (good + bad) // 2
-            self.logger.info(f"binary step. good {good}, bad {bad}, height {height}")
-            header = await self.get_block_header(height, 'binary')
-            chain = blockchain.check_header(header) if 'mock' not in header else header['mock']['check'](header)
+            self.logger.info(f"Binary step. good={good}, bad={bad}, height={height}")
+
+            try:
+                header = await self.get_block_header(height, 'binary')
+                self.logger.debug(f"Retrieved header at height {height}: {header}")
+            except Exception as e:
+                self.logger.error(f"Error retrieving header at height {height}: {e}")
+                raise
+
+            try:
+                chain = blockchain.check_header(header) if 'mock' not in header else header['mock']['check'](header)
+                self.logger.debug(f"check_header result: {chain}")
+                
+                # Additional debugging for ASERT
+                if height >= 3000000:
+                    self.logger.debug(f"ASERT debugging: Checking header at height {height}")
+                    try:
+                        target = self.blockchain.get_target(height)
+                        self.logger.debug(f"Calculated target: {target}")
+                        self.blockchain.verify_header(header, self.blockchain.get_hash(height - 1), target)
+                        self.logger.debug("Header verification passed")
+                    except Exception as e:
+                        self.logger.error(f"ASERT verification failed: {str(e)}")
+                    
+            except Exception as e:
+                self.logger.error(f"Error in check_header for height {height}: {e}")
+                raise
+
             if chain:
                 self.blockchain = chain if isinstance(chain, Blockchain) else self.blockchain
+                self.logger.debug(f"Updated blockchain: {self.blockchain}")
                 good = height
             else:
                 bad = height
                 bad_header = header
+                self.logger.debug(f"Updated bad_header: {bad_header}")
+
             if good + 1 == bad:
+                self.logger.info(f"Binary search converged: good={good}, bad={bad}")
                 break
 
         mock = 'mock' in bad_header and bad_header['mock']['connect'](height)
         real = not mock and self.blockchain.can_connect(bad_header, check_height=False)
-        if not real and not mock:
-            raise Exception('unexpected bad header during binary: {}'.format(bad_header))
-        _assert_header_does_not_check_against_any_chain(bad_header)
+        self.logger.debug(f"Final checks: mock={mock}, real={real}")
 
-        self.logger.info(f"binary search exited. good {good}, bad {bad}")
+        if not real and not mock:
+            self.logger.error(f"Unexpected bad header: {bad_header}")
+            # Additional debugging for unexpected bad header
+            self.logger.debug(f"Blockchain height: {self.blockchain.height()}")
+            self.logger.debug(f"Previous hash: {self.blockchain.get_hash(bad_header['block_height'] - 1)}")
+            try:
+                target = self.blockchain.get_target(bad_header['block_height'])
+                self.logger.debug(f"Calculated target for bad header: {target}")
+                self.blockchain.verify_header(bad_header, self.blockchain.get_hash(bad_header['block_height'] - 1), target)
+            except Exception as e:
+                self.logger.error(f"Verification of bad header failed: {str(e)}")
+            raise Exception(f'unexpected bad header during binary: {bad_header}')
+
+        try:
+            _assert_header_does_not_check_against_any_chain(bad_header)
+        except AssertionError:
+            self.logger.error(f"bad_header unexpectedly checks against a chain: {bad_header}")
+            raise
+
+        self.logger.info(f"Binary search exited. good={good}, bad={bad}")
         return good, bad, bad_header
 
     async def _resolve_potential_chain_fork_given_forkpoint(self, good, bad, bad_header):
