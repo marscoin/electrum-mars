@@ -47,7 +47,10 @@ except ImportError:
 _logger = get_logger(__name__)
 
 HEADER_SIZE = 80  # bytes
-MAX_TARGET = 0x00000FFFFF000000000000000000000000000000000000000000000000000000
+# At top of blockchain.py with other constants
+POW_LIMIT_BITS = 0x1e0fffff  # Correct anchor block value
+MAX_TARGET = 0x00000FFFFF000000000000000000000000000000000000000000000000000000  # Expanded form
+MAX_BITS = 0x1e0fffff 
 DGW_PAST_BLOCKS = 24
 POW_DGW3_HEIGHT = 126000
 #POW_TARGET_SPACING = int(2.5 * 60)
@@ -333,21 +336,30 @@ class Blockchain(Logger):
         if constants.net.TESTNET:
             return
 
-        bits = cls.target_to_bits(target)
         header_bits = header.get('bits')
-        
-        # Special handling for transition period
-        if height in (ASERT_HEIGHT, ASERT_HEIGHT + 1, ASERT_HEIGHT + 2):
-            logger.warning(f"Block bits mismatch: calculated {bits}, header has {header_bits}")
-            logger.warning("Allowing mismatch for special block")
-            return
+        timestamps = header.get('timestamp')
 
+        # Special case for blocks around ASERT transition
+        if height == ASERT_HEIGHT:  # Anchor block
+            if header_bits != POW_LIMIT_BITS:  # 0x1e0fffff
+                logger.warning(f"Anchor block expected bits {POW_LIMIT_BITS:08x}, got {header_bits:08x}")
+                raise Exception("Wrong bits for ASERT anchor block")
+            return
+        elif height <= ASERT_HEIGHT:
+            # Use original DGW logic
+            bits = cls.target_to_bits(target)
+        else:
+            # Use ASERT logic
+            bits = cls.asert_target_to_bits2(target)
+            
+        # Allow bit mismatches during transition period
         if bits != header_bits:
             raise Exception(f"bits mismatch: {bits} vs {header_bits}")
         
         block_hash_as_num = int.from_bytes(bfh(_powhash), byteorder='big')
         if block_hash_as_num > target:
             raise Exception("insufficient proof of work")
+        
         
     def verify_chunk(self, index: int, data: bytes) -> None:
         num = len(data) // HEADER_SIZE
@@ -573,220 +585,310 @@ class Blockchain(Logger):
             return ts
         return self.read_header(height).get('timestamp')
 
-    
-    def get_target(self, height: int, chunk_headers=None) -> int:
-        """Return bits value for given height"""
+        
+
+    def get_target(self, height: int, chunk_headers: Optional[dict]=None) -> int:
         if chunk_headers is None:
             chunk_headers = {'empty': True}
-
-        # Special handling for transition period
-        if height == ASERT_HEIGHT:  # Anchor block
-            return 504365055  # Return exact bits value from chain
-        elif height == ASERT_HEIGHT + 1:  # First ASERT block
-            return 504342639  # First block's exact bits
-        elif height == ASERT_HEIGHT + 2:  # Second ASERT block 
-            return 504352751  # Second block's exact bits
-        elif height > ASERT_HEIGHT:
-            # Regular ASERT calculation
-            prev_height = height - 1
-            prev_header = None
-            if not chunk_headers['empty'] and chunk_headers['min_height'] <= prev_height <= chunk_headers['max_height']:
-                prev_header = chunk_headers[prev_height]
-            else:
-                prev_header = self.read_header(prev_height)
-                
-            if prev_header is None:
-                raise MissingHeader(f"Previous header not found at height {prev_height}")
-                    
-            return self.get_target_asert(height, prev_header, chunk_headers)
-
-        # Pre-ASERT uses DGW3
-        if height >= POW_DGW3_HEIGHT:
+            
+        if height >= POW_DGW3_HEIGHT and height <= ASERT_HEIGHT:
             return self.get_target_dgw_v3(height, chunk_headers)
-            
-        return MAX_TARGET
-
-
-    @classmethod
-    def bits_to_target_asert(cls, bits: int) -> int:
-        size = (bits >> 24) & 0xff
-        word = bits & 0x007fffff
-        if size <= 3:
-            return word >> (8 * (3 - size))
-        return word << (8 * (size - 3))
-
-    @classmethod 
-    def target_to_bits_asert(cls, target: int) -> int:
-        size = (target.bit_length() + 7) // 8
-        if size <= 3:
-            word = (target & 0xffffff) << (8 * (3 - size))
-        else:
-            word = target >> (8 * (size - 3))
-            if word & 0x00800000:
-                word >>= 8
-                size += 1
-        word &= 0x007fffff
-        return word | (size << 24)
-
-    def get_target_asert(self, height: int, prev_header=None, chunk_headers=None, pindexLast=None) -> int:
-        HALF_LIFE = 2 * 3600 
-        TARGET_SPACING = 123
-        ANCHOR_HEIGHT = 2999999
-        
-        if height == ANCHOR_HEIGHT + 1:
-            return 0x1e10ffff
-            
-        # Get blocks
-        anchor_header = self.read_header(ANCHOR_HEIGHT)
-        if not anchor_header:
-            raise MissingHeader(f"Anchor block not found at height {ANCHOR_HEIGHT}")
-        
-        if prev_header is None:
+        if height == ASERT_HEIGHT:  # ASERT_HEIGHT = 2999999
+            return self.asert_bits_to_target2(0x1e0fffff)
+        if height > ASERT_HEIGHT:  # ASERT_HEIGHT = 2999999
             prev_header = self.read_header(height - 1)
-            if not prev_header:
-                raise MissingHeader(f"Previous header not found at height {height-1}")
+            if prev_header is None:
+                raise MissingHeader(f"Previous header not found at height {height - 1}")
+            return self.get_target_asert(height, prev_header, chunk_headers)
+        else:
+            return MAX_TARGET
 
-        # Calculate
-        anchor_target = self.bits_to_target_asert(anchor_header['bits'])
-        time_diff = prev_header['timestamp'] - anchor_header['timestamp'] 
-        height_diff = height - ANCHOR_HEIGHT - 1
+        
+    @classmethod
+    def int_to_little_endian_hex(self, n, width=64):
+        # Convert to bytes in little-endian order
+        bytes_le = n.to_bytes(32, byteorder='little')
+        # Convert to hex string
+        hex_str = bytes_le.hex()
+        # Pad to desired width
+        return hex_str.zfill(width)
 
-        # Calculate exponent
-        exponent = ((time_diff - TARGET_SPACING * height_diff) * 65536) // HALF_LIFE
+        
+    @classmethod
+    def cpp_divide(self, n: int, d: int) -> int:
+        """Implements C++'s division behavior which rounds toward zero"""
+        if (n < 0) ^ (d < 0):  
+            return -(abs(n) // abs(d))
+        return n // d
+
+    def get_target_asert(self, height: int, prev_header: dict, chunk_headers: dict = None) -> int:
+        logger = logging.getLogger("blockchain")
+        
+        # Constants 
+        HALF_LIFE = 2 * 3600  # 2 hours = 7200 seconds
+        TARGET_SPACING = 123  # 2 Mars-minutes
+        ANCHOR_HEIGHT = 2999999
+        ANCHOR_BITS = 0x1e0fffff
+        ANCHOR_TIME = 1720883312
+        
+        logger.warning("Starting GravityAsert calculation")
+        logger.warning(f"Last block height: {height-1}")
+        logger.warning(f"Current block height: {height}")
+        
+        # Calculate differences 
+        time_diff = prev_header['timestamp'] - ANCHOR_TIME
+        height_diff = height - ANCHOR_HEIGHT - 1  # Add the -1 back
+        
+        logger.warning(f"Time difference: {time_diff}")
+        logger.warning(f"Height difference: {height_diff}")
+        logger.warning(f"Anchor target set from bits: {ANCHOR_BITS} (0x{ANCHOR_BITS:08x})")
+
+        # Handle anchor block case explicitly
+        if height_diff < 0:
+            # We're at or before anchor block
+            expected_secs = 0
+        else:
+            expected_secs = TARGET_SPACING * (height_diff + 1)
+            
+        actual_secs = time_diff    
+        numerator = (actual_secs - expected_secs) * 65536
+        #numerator = ((nTimeDiff - 123 * (nHeightDiff + 1)) * 65536)
+        exponent = self.cpp_divide(numerator, HALF_LIFE)
+        
+        # Debug values
+        logger.warning(f"Expected seconds: {expected_secs}")
+        logger.warning(f"Actual seconds: {actual_secs}")
+        logger.warning(f"Numerator before division: {numerator}")
+        logger.warning(f"Height diff: {height_diff}")
+        logger.warning(f"Python division would give: {numerator // HALF_LIFE}")
+        logger.warning(f"C++ style division gives: {exponent}")
+        logger.warning(f"Calculated exponent: {exponent}")
+        
         shifts = exponent >> 16
         frac = exponent & 0xffff
-
-        # Factor
-        factor = 65536 + ((195766423245049 * frac + 971821376 * frac * frac + 5127 * frac * frac * frac + (1 << 47)) >> 48)
-        target = (anchor_target * factor) >> 16
-
-        # Apply shifts
-        if shifts > 0:
-            target <<= shifts 
-        else:
-            target >>= -shifts
-
-        # Limits
-        if target == 0:
-            target = 1
-        elif target > MAX_TARGET:
-            target = MAX_TARGET
-
-        return self.target_to_bits_asert(target)
-
-    #old...
-    # def get_target_asert(self, height: int, prev_header: dict, chunk_headers: dict = None) -> int:
-    #     """Calculate next target using ASERT"""
-    #     # Constants
-    #     HALF_LIFE = 2 * 3600  # 2 hours in seconds
-    #     TARGET_SPACING = 123  # 2 Mars-minutes
-    #     ANCHOR_HEIGHT = 2999999  # Fixed anchor block height
-
-    #     self.logger.info(f"ASERT calculation for height {height}")
-
-    #     # Initialize chunk_headers if None
-    #     if chunk_headers is None:
-    #         chunk_headers = {'empty': True}
-            
-    #     # Special handling for the transition block
-    #     if height == ANCHOR_HEIGHT + 1:
-    #         self.logger.warning("Processing ASERT transition block")
-    #         return prev_header['bits']
-
-    #     # Get anchor block - first try chunk_headers, then stored chain
-    #     anchor_block = None
-    #     if not chunk_headers['empty'] and chunk_headers['min_height'] <= ANCHOR_HEIGHT <= chunk_headers['max_height']:
-    #         self.logger.info("Getting anchor block from chunk headers")
-    #         anchor_block = chunk_headers[ANCHOR_HEIGHT]
-    #     else:
-    #         self.logger.info("Getting anchor block from stored chain")
-    #         anchor_block = self.read_header(ANCHOR_HEIGHT)
-
-    #     if not anchor_block:
-    #         raise MissingHeader(f"Anchor block not found at height {ANCHOR_HEIGHT}")
-
-    #     self.logger.info(f"Anchor block: {anchor_block}")
-
-    #     # Time difference and height difference
-    #     time_diff = prev_header['timestamp'] - anchor_block['timestamp']
-    #     height_diff = height - ANCHOR_HEIGHT - 1
-
-    #     self.logger.info(f"Time diff: {time_diff}, Height diff: {height_diff}")
-
-    #     # Calculate exponent
-    #     exponent = ((time_diff - TARGET_SPACING * height_diff) * 65536) // HALF_LIFE
         
-    #     # Get anchor target
-    #     anchor_target = self.bits_to_target3(anchor_block['bits'])
+        logger.warning(f"Shifts (integer part of exponent): {shifts}")
+        logger.warning(f"Fractional part of exponent: {frac}")
 
-    #     # Split exponent into integer and fractional parts
-    #     shifts = exponent >> 16
-    #     frac = exponent & 0xFFFF
+        # Factor calculation matching C++
+        factor = 65536 + ((195766423245049 * frac +
+                        971821376 * frac * frac +
+                        5127 * frac * frac * frac +
+                        (1 << 47)) >> 48)
 
-    #     self.logger.info(f"Exponent: {exponent}, Shifts: {shifts}, Fractional: {frac}")
+        logger.warning(f"Calculated factor: {factor}")
+        logger.warning("Calculated next target before shift adjustments")
 
-    #     # Calculate target using the same logic as C++ implementation
-    #     target = anchor_target
-    #     if shifts < 0:
-    #         target >>= -shifts
-    #     else:
-    #         target <<= shifts
+        # Calculate next target
+        anchor_target = self.asert_bits_to_target2(ANCHOR_BITS)
+        next_target = anchor_target * factor
+        next_target >>= 16  
+        
+        shifts = shifts - 16  
+        logger.warning(f"Shifting right by: {abs(shifts)}")
 
-    #     # Apply fractional part using polynomial approximation
-    #     factor = 65536 + ((195766423245049 * frac + 
-    #                     971821376 * frac * frac + 
-    #                     5127 * frac * frac * frac + 
-    #                     (1 << 47)) >> 48)
-    #     target = (target * factor) >> 16
+        if shifts < 0:
+            next_target >>= -shifts
+        else:
+            next_target <<= shifts
 
-    #     self.logger.info(f"Target after calculations: {target}")
+        logger.warning(f"Anchor Target: {anchor_target:x}")    
+        logger.warning(f"Next Target: {next_target:x}")
+        
+        # For comparison of representations:
+        be_hex = f"{next_target:064x}"  # Big endian hex
+        le_hex = self.int_to_little_endian_hex(next_target)  # Little endian hex
 
-    #     # Ensure target is within bounds
-    #     if target > MAX_TARGET:
-    #         self.logger.info(f"Target exceeded MAX_TARGET, using MAX_TARGET")
-    #         target = MAX_TARGET
-    #     if target == 0:
-    #         self.logger.info("Target is 0, using 1")
-    #         target = 1
+        logger.warning(f"Next Target BE hex: {be_hex}")
+        logger.warning(f"Next Target LE hex: {le_hex}")
 
-    #     bits = self.target_to_bits3(target)
-    #     self.logger.info(f"Final calculated bits: {bits}")
-    #     return bits
+        # Convert le_hex back to bytes and then to int in little-endian order
+        le_bytes = bytes.fromhex(le_hex)
+        le_int = int.from_bytes(le_bytes, byteorder='little')
 
-    def bits_to_target(self, bits: int) -> int:
-        """Convert compact bits to target with logging"""
+        # Calculate bits using both representations
+        result_bits = self.target_to_bits(next_target)
+        result_bits_le = self.target_to_bits(le_int)  # Use le_int here
+
+        logger.warning(f"Result comparison:")                        
+        logger.warning(f"Final bits: {result_bits} (0x{result_bits:08x})")
+        logger.warning(f"Final bits LE: {result_bits_le} (0x{result_bits_le:08x})")
+        
+        next_target_difficulty = MAX_TARGET / next_target  
+        current_target = self.target_to_bits(prev_header['bits'])
+        current_difficulty = MAX_TARGET / current_target
+        
+        logger.warning(f"ASERT Next Target difficulty: {next_target_difficulty:.6f}")
+        logger.warning(f"Current difficulty: {current_difficulty:.6f}")
+        logger.warning("==GravityAsertComplete===================================")
+
+        return result_bits
+
+    @classmethod
+    def asert_bits_to_target2(cls, bits):
+        """Directly matches C++ uint256::SetCompact"""
         size = bits >> 24
         word = bits & 0x007fffff
         
-        # Apply the same logic as the C++ implementation
         if size <= 3:
-            target = word >> (8 * (3 - size))
+            word >>= 8 * (3 - size)
+            return word
         else:
-            target = word << (8 * (size - 3))
+            # Python equivalent of left shift on uint256
+            return word << (8 * (size - 3))
 
-        self.logger.info(f"bits_to_target: {bits} -> {target}")
-        return target
+    @classmethod  
+    def asert_target_to_bits2(cls, target):
+        """Directly matches C++ uint256::GetCompact"""
+        # Get bit length
+        bit_length = target.bit_length()
+        size = (bit_length + 7) // 8
 
-    def target_to_bits(self, target: int) -> int:
-        """Convert target to compact bits with logging"""
-        # Find the size - number of bytes needed
-        size = (target.bit_length() + 7) // 8
-        
-        # Convert to compact format
         if size <= 3:
-            compact = (target & 0xffffff) << (8 * (3 - size))
+            compact = target << (8 * (3 - size))
         else:
+            # Equivalent to right shift on uint256
             compact = target >> (8 * (size - 3))
-            # Check if the 0x00800000 bit is set, which would give us an extra leading 1
-            if compact & 0x00800000:
-                compact >>= 8
-                size += 1
-
-        # Add the size bits
-        bits = compact | (size << 24)
+            # Only take lowest 64 bits
+            compact = compact & ((1 << 64) - 1)  # GetLow64()
         
-        self.logger.info(f"target_to_bits: {target} -> {bits}")
-        return bits
+        # The 0x00800000 bit denotes the sign.
+        # If already set, divide mantissa by 256 and increase exponent.
+        if compact & 0x00800000:
+            compact >>= 8
+            size += 1
+
+        # Ensure mantissa does not overflow
+        compact &= 0x007fffff
+        assert size < 256
+        
+        # Combine size and mantissa
+        compact |= size << 24
+        
+        return compact
+    
+    @classmethod  
+    def asert_target_to_bits4(cls, target, f_negative=False):
+        """
+        Convert a target integer to a compact format similar to the C++ uint256::GetCompact implementation.
+        The compact format is a floating-point-like representation where:
+        - Most significant 8 bits are the exponent of base 256.
+        - Next 23 bits are the mantissa.
+        - Bit 24 represents the sign (only if f_negative is True and mantissa is non-zero).
+        """
+        # Calculate the number of bytes necessary to represent the target
+        bit_length = target.bit_length()
+        size = (bit_length + 7) // 8
+
+        if size <= 3:
+            compact = target << (8 * (3 - size))
+        else:
+            # Simulate right shift on uint256 and get low 64 bits
+            compact = target >> (8 * (size - 3))
+            compact = compact & ((1 << 64) - 1)  # GetLow64() equivalent
+
+        # Handle the 0x00800000 sign bit if necessary
+        if compact & 0x00800000:
+            compact >>= 8
+            size += 1
+
+        # Ensure mantissa does not overflow 23 bits
+        compact &= 0x007fffff
+        assert size < 256, "Size too large"
+
+        # Combine size and mantissa
+        compact |= size << 24
+
+        # Handle the sign bit if f_negative is True and the compact mantissa is non-zero
+        if f_negative and (compact & 0x007fffff):
+            compact |= 0x00800000
+
+        return compact
+
+
+
+
+    @classmethod
+    def bits_to_target(cls, bits: int) -> int:
+        """Standard bits to target conversion (used by DGW3)"""
+        bitsN = (bits >> 24) & 0xff
+        if not (0x03 <= bitsN <= 0x1e):
+            raise Exception("First part of bits should be in [0x03, 0x1e]")
+        bitsBase = bits & 0x00ffffff
+        if not (0x8000 <= bitsBase <= 0x7fffff):
+            raise Exception("Second part of bits should be in [0x8000, 0x7fffff]")
+        return bitsBase << (8 * (bitsN-3))
+
+    @classmethod
+    def target_to_bits(cls, target: int) -> int:
+        """Standard target to bits conversion (used by DGW3)"""
+        c = ("%064x" % target)[2:]
+        while c[:2] == '00' and len(c) > 6:
+            c = c[2:]
+        bitsN, bitsBase = len(c) // 2, int(c[:6], 16)
+        if bitsBase >= 0x800000:
+            bitsN += 1
+            bitsBase >>= 8
+        return bitsN << 24 | bitsBase
+
+    @classmethod
+    def asert_bits_to_target(cls, bits: int) -> int:
+        """Bits to target conversion for ASERT"""
+        logger = logging.getLogger("blockchain")
+        size = bits >> 24
+        word = bits & 0x007fffff
+        
+        logger.debug(f"bits_to_target input: {bits:08x}")
+        logger.debug(f"size: {size}, word: {word:06x}")
+        
+        result = word << (8 * (size - 3)) if size > 3 else word >> (8 * (3 - size))
+        logger.debug(f"bits_to_target result: {result:x}")
+        return result
+
+    @classmethod
+    def asert_target_to_bits(cls, target: int) -> int:
+        """Target to bits conversion for ASERT"""
+        logger = logging.getLogger("blockchain")
+        if target == 0:
+            return 0
+            
+        logger.debug(f"Converting target to bits:")
+        logger.debug(f"Input target: {target:x}")
+        
+        # Get bit length and size in bytes
+        bit_length = target.bit_length()
+        size = (bit_length + 7) // 8
+        
+        logger.debug(f"Bit length: {bit_length}")
+        logger.debug(f"Initial size in bytes: {size}")
+        
+        # Extract mantissa
+        if size <= 3:
+            shift = 8 * (3 - size)
+            logger.debug(f"Small target, shifting left by {shift}")
+            mantissa = target << shift
+        else:
+            shift = 8 * (size - 3)
+            logger.debug(f"Large target, shifting right by {shift}")
+            mantissa = target >> shift
+            
+        logger.debug(f"Initial mantissa: {mantissa:x}")
+        
+        # Check for sign bit
+        if mantissa & 0x00800000:
+            logger.debug("Sign bit set, adjusting...")
+            mantissa >>= 8
+            size += 1
+        
+        mantissa &= 0x007fffff
+        logger.debug(f"Final mantissa: {mantissa:06x}")
+        
+        # Force size to 0x1e for ASERT
+        size = 0x1e
+        result = (size << 24) | mantissa
+        logger.debug(f"Final bits: {result:08x}")
+        return result
+
 
 
 
@@ -836,62 +938,9 @@ class Blockchain(Logger):
         return new_target
     
 
-    
-    @classmethod
-    def bits_to_target3(self, bits: int) -> int:
-        """Convert compact bits to target (ASERT version)"""
-        size = bits >> 24
-        word = bits & 0x00ffffff
-        if size <= 3:
-            return word >> (8 * (3 - size))
-        else:
-            return word << (8 * (size - 3))
-
-    @classmethod
-    def target_to_bits3(self, target: int) -> int:
-        """Convert target to compact bits (ASERT version)"""
-        if target == 0:
-            return 0
-        size = (target.bit_length() + 7) // 8
-        mask64 = 0xffffffffffffffff
-        if size <= 3:
-            compact = (target & mask64) << (8 * (3 - size))
-        else:
-            compact = (target >> (8 * (size - 3))) & mask64
-
-        if compact & 0x00800000:
-            compact >>= 8
-            size += 1
-
-        return compact | size << 24
-
-    @classmethod
-    def bits_to_target(cls, bits: int) -> int:
-        """Convert compact bits to target (standard version)"""
-        bitsN = (bits >> 24) & 0xff
-        if not (0x03 <= bitsN <= 0x1e):
-            raise Exception("First part of bits should be in [0x03, 0x1e]")
-        bitsBase = bits & 0xffffff
-        if not (0x8000 <= bitsBase <= 0x7fffff):
-            raise Exception("Second part of bits should be in [0x8000, 0x7fffff]")
-        return bitsBase << (8 * (bitsN-3))
-
-    @classmethod
-    def target_to_bits(cls, target: int) -> int:
-        """Convert target to compact bits (standard version)"""
-        c = ("%064x" % target)[2:]
-        while c[:2] == '00' and len(c) > 6:
-            c = c[2:]
-        bitsN, bitsBase = len(c) // 2, int.from_bytes(bfh(c[:6]), byteorder='big')
-        if bitsBase >= 0x800000:
-            bitsN += 1
-            bitsBase >>= 8
-        return bitsN << 24 | bitsBase
-
     def chainwork_of_header_at_height(self, height: int) -> int:
         """work done by single header at given height"""
-        chunk_idx = height // 2016 - 1
-        target = self.get_target(chunk_idx)
+        target = self.get_target(height)
         work = ((2 ** 256 - target - 1) // (target + 1)) + 1
         return work
 
