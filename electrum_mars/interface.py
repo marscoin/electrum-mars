@@ -813,16 +813,18 @@ class Interface(Logger):
 
             try:
                 chain = blockchain.check_header(header) if 'mock' not in header else header['mock']['check'](header)
-                self.logger.debug(f"check_header result: {chain}")
+                self.logger.warning(f"check_header result: {chain}")
                 
                 # Additional debugging for ASERT
                 if height >= 3000000:
-                    self.logger.debug(f"ASERT debugging: Checking header at height {height}")
+                    self.logger.warning(f"ASERT debugging: Checking header at height {height}")
                     try:
+                        self.logger.warning("Now...")
                         target = self.blockchain.get_target(height)
-                        self.logger.debug(f"Calculated target: {target}")
+                        self.logger.warning("T:" + str(target))
+                        self.logger.warning(f"Calculated target: {target}")
                         self.blockchain.verify_header(header, self.blockchain.get_hash(height - 1), target)
-                        self.logger.debug("Header verification passed")
+                        self.logger.warning("Header verification passed")
                     except Exception as e:
                         self.logger.error(f"ASERT verification failed: {str(e)}")
                     

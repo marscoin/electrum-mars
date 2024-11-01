@@ -345,7 +345,7 @@ class Blockchain(Logger):
                 logger.warning(f"Anchor block expected bits {POW_LIMIT_BITS:08x}, got {header_bits:08x}")
                 raise Exception("Wrong bits for ASERT anchor block")
             return
-        elif height <= ASERT_HEIGHT:
+        elif height < ASERT_HEIGHT:
             # Use original DGW logic
             bits = cls.target_to_bits(target)
         else:
@@ -707,15 +707,15 @@ class Blockchain(Logger):
         le_int = int.from_bytes(le_bytes, byteorder='little')
 
         # Calculate bits using both representations
-        result_bits = self.target_to_bits(next_target)
-        result_bits_le = self.target_to_bits(le_int)  # Use le_int here
+        result_bits = self.asert_target_to_bits2(next_target)
+        result_bits_le = self.asert_target_to_bits2(le_int)  # Use le_int here
 
         logger.warning(f"Result comparison:")                        
         logger.warning(f"Final bits: {result_bits} (0x{result_bits:08x})")
         logger.warning(f"Final bits LE: {result_bits_le} (0x{result_bits_le:08x})")
         
         next_target_difficulty = MAX_TARGET / next_target  
-        current_target = self.target_to_bits(prev_header['bits'])
+        current_target = self.asert_target_to_bits2(prev_header['bits'])
         current_difficulty = MAX_TARGET / current_target
         
         logger.warning(f"ASERT Next Target difficulty: {next_target_difficulty:.6f}")
@@ -737,9 +737,10 @@ class Blockchain(Logger):
             # Python equivalent of left shift on uint256
             return word << (8 * (size - 3))
 
-    @classmethod  
+
+    @classmethod
     def asert_target_to_bits2(cls, target):
-        """Directly matches C++ uint256::GetCompact"""
+        """Directly matches C++ uint256::GetCompact but ensures 0x1e size byte"""
         # Get bit length
         bit_length = target.bit_length()
         size = (bit_length + 7) // 8
@@ -751,7 +752,7 @@ class Blockchain(Logger):
             compact = target >> (8 * (size - 3))
             # Only take lowest 64 bits
             compact = compact & ((1 << 64) - 1)  # GetLow64()
-        
+
         # The 0x00800000 bit denotes the sign.
         # If already set, divide mantissa by 256 and increase exponent.
         if compact & 0x00800000:
@@ -761,10 +762,10 @@ class Blockchain(Logger):
         # Ensure mantissa does not overflow
         compact &= 0x007fffff
         assert size < 256
-        
-        # Combine size and mantissa
-        compact |= size << 24
-        
+
+        # Combine size and mantissa, but force size to 0x1e
+        compact |= 0x1e << 24  # Changed this line to force 0x1e size byte
+
         return compact
     
     @classmethod  
