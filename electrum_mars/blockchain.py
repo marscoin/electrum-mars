@@ -578,23 +578,63 @@ class Blockchain(Logger):
         return self.read_header(height).get('timestamp')
         
 
+    # def get_target(self, height: int, chunk_headers: Optional[dict]=None) -> int:
+    #     if height == 2999999 or height == ASERT_HEIGHT - 1:  # Transition block
+    #         self._logger.info(f"[blockchain] Getting target for transition block {height}")
+    #         header = self.read_header(height)
+    #         if header is None and chunk_headers:
+    #             header = chunk_headers.get(height)
+    #         if header is None:
+    #             if hasattr(self, 'bad_header') and self.bad_header['block_height'] == height:
+    #                 self._logger.warning(f"[blockchain] Using bad_header bits for transition block {height}")
+    #                 return self.bits_to_target(self.bad_header['bits'])
+    #             self._logger.warning(f"[blockchain] Unable to find header for transition block {height}")
+    #             return MAX_TARGET  # Return MAX_TARGET instead of raising an exception
+    #         return self.bits_to_target(header['bits'])
+    #     elif height >= ASERT_HEIGHT:
+    #         return self.get_target_asert(height, chunk_headers)
+    #     elif height >= POW_DGW3_HEIGHT:
+    #         return self.get_target_dgw_v3(height, chunk_headers)
+    #     else:
+    #         return MAX_TARGET
+        
     def get_target(self, height: int, chunk_headers: Optional[dict]=None) -> int:
-        if height == 2999999 or height == ASERT_HEIGHT - 1:  # Transition block
-            self._logger.info(f"[blockchain] Getting target for transition block {height}")
-            header = self.read_header(height)
-            if header is None and chunk_headers:
-                header = chunk_headers.get(height)
-            if header is None:
-                if hasattr(self, 'bad_header') and self.bad_header['block_height'] == height:
-                    self._logger.warning(f"[blockchain] Using bad_header bits for transition block {height}")
-                    return self.bits_to_target(self.bad_header['bits'])
-                self._logger.warning(f"[blockchain] Unable to find header for transition block {height}")
-                return MAX_TARGET  # Return MAX_TARGET instead of raising an exception
-            return self.bits_to_target(header['bits'])
-        elif height >= ASERT_HEIGHT:
-            return self.get_target_asert(height, chunk_headers)
-        elif height >= POW_DGW3_HEIGHT:
+        """Return bits value for given height"""
+        if chunk_headers is None:
+            chunk_headers = {'empty': True}
+
+        # Handle transition block specially
+        # if height == ASERT_HEIGHT - 1:  # Block 2999999
+        #     self._logger.warning(f"[blockchain] Getting target for transition block {height}")
+        #     header = self.read_header(height)
+        #     self.logger.warning(header)
+        #     if header is None and not chunk_headers['empty']:
+        #         header = chunk_headers.get(height)
+        #     if header is None:
+        #         self._logger.warning(f"[blockchain] Unable to find header for transition block {height}")
+        #         return MAX_TARGET
+        #     return self.bits_to_target(header['bits'])
+
+        # DGW3 is used up to and including the anchor block (2999999)
+        if height >= POW_DGW3_HEIGHT and height < ASERT_HEIGHT:
             return self.get_target_dgw_v3(height, chunk_headers)
+        
+        # ASERT starts at height 3000000
+        elif height >= ASERT_HEIGHT:
+            prev_height = height - 1
+            # Get previous header either from chunk or stored chain
+            prev_header = None
+            if not chunk_headers['empty'] and chunk_headers['min_height'] <= prev_height <= chunk_headers['max_height']:
+                prev_header = chunk_headers[prev_height]
+            else:
+                prev_header = self.read_header(prev_height)
+            
+            if prev_header is None:
+                self._logger.error(f"[blockchain] Previous header not found at height {prev_height}")
+                raise MissingHeader(f"Previous header not found at height {prev_height}")
+                
+            return self.get_target_asert(height, prev_header)
+        
         else:
             return MAX_TARGET
 
