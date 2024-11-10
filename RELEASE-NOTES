@@ -1,3 +1,9 @@
+# Release 1.6.5 - (November, 2024)
+ * Added ASERT difficulty targeting support
+ * Added Checkpoint list
+ * Minor bug fixes
+ * Tested with Marscoin ElectrumX server
+
 # Release 1.6 - (August, 2021)
  * Marscoin support added
  * Removed Lightning references
