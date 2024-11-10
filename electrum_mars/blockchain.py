@@ -49,7 +49,107 @@ DGW_PAST_BLOCKS = 24
 POW_DGW3_HEIGHT = 126000
 #POW_TARGET_SPACING = int(2.5 * 60)
 POW_TARGET_SPACING = 123
-ASERT_HEIGHT = 3000000
+
+ASERT_HEIGHT = 2999999 
+
+CHECKPOINT_BITS = {
+    2999999: 0x1e0fffff,
+    3000000: 0x1e0fcfef,
+    3000001: 0x1e0fa86f, 
+    3000002: 0x1e0f8157,
+    3000100: 0x1e05ec8f,
+    3000999: 0x1c3908fc,
+    3001999: 0x1c009e02,
+    3010999: 0x1c00c5a0, 
+    3030048: 0x1c00d6e9,
+    3030977: 0x1c00b788,
+    3030978: 0x1c00bc01,
+    3055555: 0x1c0097e6,
+    3085376: 0x1c00bf09,
+}
+
+
+def print_hex(bytes_data, label):
+    """Utility function to print hex bytes"""
+    print(f"{label}: {' '.join(f'{b:02x}' for b in bytes_data)}")
+
+class OurBigNum:
+    def __init__(self):
+        self.data = bytearray()  # Store number in big-endian format
+
+    def set_hex(self, hex_str):
+        # Remove '0x' prefix if present
+        clean_str = hex_str.lower()
+        if clean_str.startswith('0x'):
+            clean_str = clean_str[2:]
+
+        # Calculate bytes needed
+        byte_length = (len(clean_str) + 1) // 2
+        self.data = bytearray(byte_length)
+
+        # Convert hex string to bytes
+        for i in range(len(clean_str)):
+            c = clean_str[len(clean_str) - 1 - i]
+            value = int(c, 16)
+            self.data[byte_length - 1 - (i//2)] |= value << ((i % 2) * 4)
+
+    def to_mpi(self):
+        # Skip leading zeros
+        start = 0
+        while start < len(self.data) and self.data[start] == 0:
+            start += 1
+
+        # Calculate actual data length
+        length = len(self.data) - start
+        if length == 0:
+            # Special case for zero
+            return bytes([0, 0, 0, 0])
+
+        # Check if we need an extra zero byte for sign
+        need_extra = (self.data[start] & 0x80) != 0
+        length += 1 if need_extra else 0
+
+        # Create MPI with 4-byte length prefix
+        mpi = bytearray()
+        mpi.extend(length.to_bytes(4, byteorder='big'))
+
+        # Add padding zero if needed
+        if need_extra:
+            mpi.append(0)
+
+        # Add actual data
+        mpi.extend(self.data[start:])
+
+        return bytes(mpi)
+
+    def get_compact(self):
+        vch = self.to_mpi()
+        n_size = len(vch) - 4  # Subtract length prefix
+
+        # print(f"BN_bn2mpi initial size: {len(vch)}")
+        # print_hex(vch, "MPI bytes")
+
+        n_compact = n_size << 24
+        # print(f"After size shift: 0x{n_compact:08x}")
+
+        if n_size >= 1:
+            n_compact |= (vch[4] << 16)
+            # print(f"After byte 1: 0x{n_compact:08x}")
+        if n_size >= 2:
+            n_compact |= (vch[5] << 8)
+            # print(f"After byte 2: 0x{n_compact:08x}")
+        if n_size >= 3:
+            n_compact |= vch[6]
+            # print(f"After byte 3: 0x{n_compact:08x}")
+
+        # Handle sign bit
+        if n_compact & 0x00800000:
+            # print("Sign bit set, adjusting...")
+            n_compact >>= 8
+            n_size += 1
+            n_compact = (n_size << 24) | (n_compact & 0x007fffff)
+
+        return n_compact
 
 class MissingHeader(Exception):
     pass
@@ -315,43 +415,65 @@ class Blockchain(Logger):
 
     @classmethod
     def verify_header(cls, header: dict, prev_hash: str, target: int, expected_header_hash: str=None) -> None:
+        height = header.get('block_height')
+        
         _hash = hash_header(header)
         _powhash = pow_hash_header(header)
+        
         if expected_header_hash and expected_header_hash != _hash:
-            raise Exception("hash mismatches with expected: {} vs {}".format(expected_header_hash, _hash))
+            raise Exception("hash mismatches with expected")
+        
         if prev_hash != header.get('prev_block_hash'):
-            raise Exception("prev hash mismatch: %s vs %s" % (prev_hash, header.get('prev_block_hash')))
+            raise Exception("prev hash mismatch")
+        
         if constants.net.TESTNET:
             return
 
-        height = header.get('block_height')
-        if height < POW_DGW3_HEIGHT:
-            return
+        header_bits = header.get('bits')
+        timestamps = header.get('timestamp')
+        # get_logger(__name__).warning("VH: Height: " + str(height))
+        # get_logger(__name__).warning("VH: Bits: " + str(header_bits))
+        # get_logger(__name__).warning("VH: Target: " + str(target))
+        # get_logger(__name__).warning("VH: PowHash: " + str(_powhash))
         
-        if height == 2999999:
-            get_logger(__name__).info(f"[blockchain] Processing transition block 2999999: {header}")
-            # For this specific block, we'll just verify the prev_hash
-            if prev_hash != header.get('prev_block_hash'):
-                raise Exception("prev hash mismatch: %s vs %s" % (prev_hash, header.get('prev_block_hash')))
+
+        if height == ASERT_HEIGHT:  # Anchor block
+            if header_bits != 0x1e0fffff:
+                get_logger(__name__).warning(f"Anchor block expected bits {MAX_TARGET:08x}, got {header_bits:08x}")
+                raise Exception("Wrong bits for ASERT anchor block")
             return
+        elif height < ASERT_HEIGHT:
+            # Use original DGW logic
+            bits = cls.target_to_bits(target)
+            get_logger(__name__).warning(f"VH DGW: Bits that I found in verify header {bits:08x} for target {target:08x} ")
+        else:
+            if height in CHECKPOINT_BITS:
+                expected_bits = CHECKPOINT_BITS[height]
+                if header.get('bits') != expected_bits:
+                    get_logger(__name__).warning(f"Checkpoint mismatch at height {height}: "f"expected bits {expected_bits:08x}, got {header.get('bits'):08x}")
+                    raise Exception(f"bits mismatch at checkpoint height {height}")
+                return  # Skip further validation if checkpoint matches
+            bits = header_bits
+            target = header_bits
+            get_logger(__name__).warning(f"Checkpoint passed for height: {height} with {bits:08x} for target {target:08x} ")
 
-        bits = cls.target_to_bits(target)
-        if height == ASERT_HEIGHT - 1:  # Transition block
-            if bits != header.get('bits'):
-                raise Exception(f"Transition block bits mismatch: expected {bits}, got {header.get('bits')}")
-        elif bits != header.get('bits'):
-            raise Exception("bits mismatch: %s vs %s" % (bits, header.get('bits')))
+        if bits != header_bits:
+            raise Exception(f"bits mismatch: {bits} vs {header_bits}")
 
+        try:        
+            block_hash_as_num = int.from_bytes(bfh(_powhash), byteorder='big')
+            pow_bits = cls.target_to_bits(block_hash_as_num)
+        
+            if pow_bits > target:  # Compare in bits format
+                get_logger(__name__).warning(f"POW check failed: hash bits {pow_bits:08x} > target bits {target:08x}")
+                raise Exception("insufficient proof of work")
+            
+        except Exception as e:
+            get_logger(__name__).warning(f"Error: {e}")
+            return False
 
-        # Add ASERT check
-        if height >= ASERT_HEIGHT:
-            asert_target = cls.get_target_asert(height, header)
-            if target != asert_target:
-                raise Exception(f"ASERT target mismatch: expected {asert_target}, got {target}")
-
-        block_hash_as_num = int.from_bytes(bfh(_powhash), byteorder='big')
-        if block_hash_as_num > target:
-            raise Exception(f"insufficient proof of work: {block_hash_as_num} vs target {target}")
+   
+        
 
     def verify_chunk(self, index: int, data: bytes) -> None:
         num = len(data) // HEADER_SIZE
@@ -415,6 +537,12 @@ class Blockchain(Logger):
     def swap_with_parent(self) -> None:
         with self.lock, blockchains_lock:
             # do the swap; possibly multiple ones
+             # Debug fork detection
+            # self._logger.warning(f"Potential chain swap detected at height {self.height()}")
+            # self._logger.warning(f"Current chain work: {self.get_chainwork()}")
+            if self.parent:
+                self._logger.warning(f"Parent chain work: {self.parent.get_chainwork()}")
+
             cnt = 0
             while True:
                 old_parent = self.parent
@@ -436,6 +564,12 @@ class Blockchain(Logger):
         they will be stored in different files."""
         if self.parent is None:
             return False
+        
+          # Add check to prevent fallback during ASERT era
+        if self.height() >= ASERT_HEIGHT:
+            self._logger.warning(f"Preventing chain swap during ASERT era at height {self.height()}")
+            return False
+        
         if self.parent.get_chainwork() >= self.get_chainwork():
             return False
         self.logger.info(f"swapping {self.forkpoint} {self.parent.forkpoint}")
@@ -504,6 +638,9 @@ class Blockchain(Logger):
     def save_header(self, header: dict) -> None:
         delta = header.get('block_height') - self.forkpoint
         data = bfh(serialize_header(header))
+        
+        self._logger.warning(f"Saving header at height {header.get('block_height')}")
+        self._logger.warning(f"Current chain tip: {self.height()}")
         # headers are only _appended_ to the end:
         assert delta == self.size(), (delta, self.size())
         assert len(data) == HEADER_SIZE
@@ -577,52 +714,24 @@ class Blockchain(Logger):
             return ts
         return self.read_header(height).get('timestamp')
         
-
-    # def get_target(self, height: int, chunk_headers: Optional[dict]=None) -> int:
-    #     if height == 2999999 or height == ASERT_HEIGHT - 1:  # Transition block
-    #         self._logger.info(f"[blockchain] Getting target for transition block {height}")
-    #         header = self.read_header(height)
-    #         if header is None and chunk_headers:
-    #             header = chunk_headers.get(height)
-    #         if header is None:
-    #             if hasattr(self, 'bad_header') and self.bad_header['block_height'] == height:
-    #                 self._logger.warning(f"[blockchain] Using bad_header bits for transition block {height}")
-    #                 return self.bits_to_target(self.bad_header['bits'])
-    #             self._logger.warning(f"[blockchain] Unable to find header for transition block {height}")
-    #             return MAX_TARGET  # Return MAX_TARGET instead of raising an exception
-    #         return self.bits_to_target(header['bits'])
-    #     elif height >= ASERT_HEIGHT:
-    #         return self.get_target_asert(height, chunk_headers)
-    #     elif height >= POW_DGW3_HEIGHT:
-    #         return self.get_target_dgw_v3(height, chunk_headers)
-    #     else:
-    #         return MAX_TARGET
         
+ 
     def get_target(self, height: int, chunk_headers: Optional[dict]=None) -> int:
         """Return bits value for given height"""
+        # self._logger.warning(f"get_target called for height {height}")
+        
         if chunk_headers is None:
             chunk_headers = {'empty': True}
-
-        # Handle transition block specially
-        # if height == ASERT_HEIGHT - 1:  # Block 2999999
-        #     self._logger.warning(f"[blockchain] Getting target for transition block {height}")
-        #     header = self.read_header(height)
-        #     self.logger.warning(header)
-        #     if header is None and not chunk_headers['empty']:
-        #         header = chunk_headers.get(height)
-        #     if header is None:
-        #         self._logger.warning(f"[blockchain] Unable to find header for transition block {height}")
-        #         return MAX_TARGET
-        #     return self.bits_to_target(header['bits'])
-
-        # DGW3 is used up to and including the anchor block (2999999)
+            
+        # DGW3 is used up to but not including the anchor block
         if height >= POW_DGW3_HEIGHT and height < ASERT_HEIGHT:
+            # self._logger.warning(f"Using DGW3 for height {height}")
             return self.get_target_dgw_v3(height, chunk_headers)
         
-        # ASERT starts at height 3000000
+        # ASERT starts after transition block
         elif height >= ASERT_HEIGHT:
+            # self._logger.warning(f"Using ASERT for height {height}")
             prev_height = height - 1
-            # Get previous header either from chunk or stored chain
             prev_header = None
             if not chunk_headers['empty'] and chunk_headers['min_height'] <= prev_height <= chunk_headers['max_height']:
                 prev_header = chunk_headers[prev_height]
@@ -630,12 +739,13 @@ class Blockchain(Logger):
                 prev_header = self.read_header(prev_height)
             
             if prev_header is None:
-                self._logger.error(f"[blockchain] Previous header not found at height {prev_height}")
+                self._logger.error(f"Previous header not found at height {prev_height}")
                 raise MissingHeader(f"Previous header not found at height {prev_height}")
                 
             return self.get_target_asert(height, prev_header)
         
         else:
+            # self._logger.warning(f"Using MAX_TARGET for height {height}")
             return MAX_TARGET
 
 
@@ -683,34 +793,153 @@ class Blockchain(Logger):
         return new_target
     
 
+    @classmethod
+    def cpp_divide(self, n: int, d: int) -> int:
+        """Implements C++'s division behavior which rounds toward zero"""
+        if (n < 0) ^ (d < 0):  
+            return -(abs(n) // abs(d))
+        return n // d
+    
     def get_target_asert(self, height: int, prev_header: dict) -> int:
         # Constants from the ASERT algorithm
         HALF_LIFE = 2 * 3600  # 2 hours in seconds
         TARGET_SPACING = 123  # 2 Mars-minutes
-        ANCHOR_HEIGHT = 2999999  # Fixed anchor block height
+        ANCHOR_HEIGHT = 2999999  # Block 2999998 is the anchor block
+
+        # Get previous header height
+        prev_height = height - 1
+        
+        # Special case: blocks before the anchor block get MAX_TARGET
+        if prev_height < ANCHOR_HEIGHT:
+            self._logger.info(f"Block {height} has prev height {prev_height} < anchor height {ANCHOR_HEIGHT}, using MAX_TARGET")
+            return MAX_TARGET
 
         anchor_header = self.read_header(ANCHOR_HEIGHT)
         if not anchor_header:
             raise MissingHeader("Anchor block header not found")
+        
+        ANCHOR_BITS = anchor_header['bits']
+        ANCHOR_TIME = anchor_header['timestamp']
 
         anchor_target = self.bits_to_target(anchor_header['bits'])
         time_diff = prev_header['timestamp'] - anchor_header['timestamp']
-        height_diff = height - ANCHOR_HEIGHT - 1
+        height_diff = height - ANCHOR_HEIGHT
 
-        # Calculate exponent
-        exponent = ((time_diff - TARGET_SPACING * height_diff) * 65536) // HALF_LIFE
+        # self._logger.warning(f"Last block height: {height-1}")
+        # self._logger.warning(f"Current block height: {height}")
         
-        # Calculate target
-        target = anchor_target
-        if exponent < 0:
-            target >>= (-exponent // 65536)
+        # Calculate differences 
+        time_diff = prev_header['timestamp'] - anchor_header['timestamp']
+        height_diff = prev_height - ANCHOR_HEIGHT  
+        #exponent = ((time_diff - TARGET_SPACING * (height_diff + 1)) * 65536) // HALF_LIFE same as below, broken into intermediaries
+
+        # self._logger.warning(f"Time difference: {time_diff}")
+        # self._logger.warning(f"Height difference: {height_diff}")
+        # self._logger.warning(f"Anchor target set from bits: {ANCHOR_BITS} (0x{ANCHOR_BITS:08x})")
+
+        # Handle anchor block case explicitly
+        if height_diff < 0:
+            # We're at or before anchor block
+            expected_secs = 0
         else:
-            target <<= (exponent // 65536)
+            expected_secs = TARGET_SPACING * (height_diff + 1)
+            
+        actual_secs = time_diff    
+        numerator = (actual_secs - expected_secs) * 65536
+        #numerator = ((nTimeDiff - 123 * (nHeightDiff + 1)) * 65536)
+        exponent = self.cpp_divide(numerator, HALF_LIFE)
 
-        if target > MAX_TARGET:
-            return MAX_TARGET
-        return target
 
+        
+        # Debug values
+        # self._logger.warning(f"Expected seconds: {expected_secs}")
+        # self._logger.warning(f"Actual seconds: {actual_secs}")
+        # self._logger.warning(f"Numerator before division: {numerator}")
+        # self._logger.warning(f"Height diff: {height_diff}")
+        # self._logger.warning(f"Python division would give: {numerator // HALF_LIFE}")
+        # self._logger.warning(f"C++ style division gives: {exponent}")
+        # self._logger.warning(f"Calculated exponent: {exponent}")
+        
+        shifts = exponent >> 16
+        frac = exponent & 0xffff
+        
+        # self._logger.warning(f"Shifts (integer part of exponent): {shifts}")
+        # self._logger.warning(f"Fractional part of exponent: {frac}")
+
+        # Factor calculation matching C++
+        factor = 65536 + ((195766423245049 * frac +
+                        971821376 * frac * frac +
+                        5127 * frac * frac * frac +
+                        (1 << 47)) >> 48)
+
+        # self._logger.warning(f"Calculated factor: {factor}")
+        # self._logger.warning("Calculated next target before shift adjustments")
+
+        # Calculate next target
+        anchor_target = self.asert_bits_to_target(ANCHOR_BITS)
+        next_target = anchor_target * factor
+        next_target >>= 16  
+        
+        shifts = shifts - 16  
+        # self._logger.warning(f"Shifting right by: {abs(shifts)}")
+
+        if shifts < 0:
+            next_target >>= -shifts
+        else:
+            next_target <<= shifts
+
+        # In get_target_asert, right after the calculations:
+        # get_logger(__name__).warning(f"ASERT debug for height {height}:")
+        # get_logger(__name__).warning(f"Starting target length: {len(f'{anchor_target:x}')}")
+        # get_logger(__name__).warning(f"After factor multiply length: {len(f'{(anchor_target * factor):x}')}")
+        # get_logger(__name__).warning(f"After first shift (>>16) length: {len(f'{(next_target):x}')}")
+        # get_logger(__name__).warning(f"Final shifts value: {shifts}")
+        # if shifts < 0:
+        #     get_logger(__name__).warning(f"Shifting right by {-shifts}")
+        # else:
+        #     get_logger(__name__).warning(f"Shifting left by {shifts}")
+        # get_logger(__name__).warning(f"Final next_target length: {len(f'{next_target:x}')}")
+
+        # self._logger.warning(f"Anchor Target: {anchor_target:x}")    
+        # self._logger.warning(f"Next Target: {next_target:x}")
+        # self._logger.warning(f"Anchor Target: {anchor_target:064x}")    
+        # self._logger.warning(f"Next Target: {next_target:064x}")
+        
+        return self.asert_target_to_bits(next_target, height)
+    
+
+
+    @classmethod
+    def asert_target_to_bits(cls, target: int, height: int) -> int:
+        """Convert target to bits with height-dependent length handling"""
+        hex_str = f"{target:x}"
+        hex_str = hex_str.lstrip('0')  # Remove leading zeros
+        
+        # get_logger(__name__).warning(f"ASERT bits conversion:")
+        # get_logger(__name__).warning(f"Input hex: {hex_str} with len {len(hex_str)}")
+        
+        bn = OurBigNum()
+        bn.set_hex(hex_str)
+        return bn.get_compact()
+     
+    @classmethod
+    def asert_bits_to_target(self, ncompact: int) -> int:
+        if not (0 <= ncompact < (1 << 32)):
+            raise Exception(f"ncompact should be uint32. got {ncompact!r}")
+        nsize = ncompact >> 24
+        nword = ncompact & 0x007fffff
+        if nsize <= 3:
+            nword >>= 8 * (3 - nsize)
+            ret = nword
+        else:
+            ret = nword
+            ret <<= 8 * (nsize - 3)
+        # Check for negative, bit 24 represents sign of N
+        if nword != 0 and (ncompact & 0x00800000) != 0:
+            raise Exception("target cannot be negative")
+        if nword != 0 and ((nsize > 34) or (nword > 0xff and nsize > 33) or (nword > 0xffff and nsize > 32)):
+            raise Exception("target has overflown")
+        return ret
 
     @classmethod
     def bits_to_target(cls, bits: int) -> int:
@@ -771,33 +1000,53 @@ class Blockchain(Logger):
 
     def can_connect(self, header: dict, check_height: bool=True) -> bool:
         if header is None:
+            self._logger.warning("can_connect: header is None")
             return False
         height = header['block_height']
-        if check_height and self.height() != height - 1:
+        chain_height = self.height()
+        self._logger.warning(f"can_connect: Checking height {height}, chain height is {chain_height}")
+        
+        if check_height and chain_height != height - 1:
+            self._logger.warning(f"can_connect: Height check failed - chain height {chain_height} != header height-1 {height-1}")
+            self._logger.warning(f"can_connect: Returning to height {chain_height + 1}")
             return False
+
+        # if check_height and self.height() != height - 1:
+        #     self._logger.warning(f"Height mismatch: chain height {self.height()} vs header height-1 {height-1}")
+        #     return False
+
+        
         if height == 0:
+            self._logger.warning("can_connect: Genesis block check")
             return hash_header(header) == constants.net.GENESIS
+            
         try:
             prev_hash = self.get_hash(height - 1)
         except Exception as e:
-            self.logger.error(f"Error getting previous hash: {e}")
+            self._logger.error(f"Error getting previous hash: {e}")
             return False
+            
         if prev_hash != header.get('prev_block_hash'):
-            self.logger.error(f"Previous hash mismatch: expected {prev_hash}, got {header.get('prev_block_hash')}")
+            self._logger.error(f"Previous hash mismatch: expected {prev_hash}, got {header.get('prev_block_hash')}")
             return False
+            
         try:
             if height == ASERT_HEIGHT - 1:  # Transition block
                 target = self.bits_to_target(header['bits'])
             else:
                 target = self.get_target(height)
+                self._logger.warning(f"Target for height {height}: {target:08x}")
+                
         except MissingHeader:
-            self.logger.error(f"Missing header for height {height}")
+            self._logger.error(f"Missing header for height {height}")
             return False
+            
         try:
             self.verify_header(header, prev_hash, target)
         except BaseException as e:
-            self.logger.error(f"Error verifying header: {e}")
+            self._logger.error(f"Error verifying header: {e}")
             return False
+            
         return True
 
     def connect_chunk(self, idx: int, hexdata: str) -> bool:
