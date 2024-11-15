@@ -9,15 +9,10 @@ PYPKG='electrum_mars'
 MAIN_SCRIPT='run_electrum'
 ICONS_FILE=PYPKG + '/gui/icons/electrum.icns'
 
-
-for i, x in enumerate(sys.argv):
-    if x == '--name':
-        VERSION = sys.argv[i+1]
-        break
-else:
-    raise Exception('no version')
+VERSION='1.6.5'
 
 electrum = os.path.abspath(".") + "/"
+electrum = '/Users/novalis78/Projects/electrum-mars/'
 block_cipher = None
 
 # see https://github.com/pyinstaller/pyinstaller/issues/2005
@@ -30,7 +25,7 @@ hiddenimports += collect_submodules('keepkeylib')
 hiddenimports += collect_submodules('websocket')
 hiddenimports += collect_submodules('ckcc')
 hiddenimports += collect_submodules('bitbox02')
-hiddenimports += ['_scrypt', 'PyQt5.QtPrintSupport']  # needed by Revealer
+hiddenimports += ['_scrypt', 'PyQt5.QtPrintSupport','scrypt', 'cryptography','libusb', 'dns', 'certifi','qrcode','protobuf','aiohttp','aiohttp_socks', 'aiorpcx','kivy','bitstring','secp256k1prp']  # needed by Revealer
 
 datas = [
     (electrum + PYPKG + '/*.json', PYPKG),
@@ -49,8 +44,8 @@ datas += collect_data_files('ckcc')
 datas += collect_data_files('bitbox02')
 
 # Add libusb so Trezor and Safe-T mini will work
-binaries = [(electrum + "contrib/osx/libusb-1.0.dylib", ".")]
-binaries += [(electrum + "contrib/osx/libsecp256k1.0.dylib", ".")]
+#binaries = [(electrum + "contrib/osx/libusb-1.0.dylib", ".")]
+binaries = [(electrum + "contrib/osx/libsecp256k1.0.dylib", ".")]
 binaries += [(electrum + "contrib/osx/libzbar.0.dylib", ".")]
 
 # Workaround for "Retro Look":

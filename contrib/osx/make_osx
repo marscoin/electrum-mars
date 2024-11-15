@@ -3,7 +3,7 @@
 set -e
 
 # Parameterize
-PYTHON_VERSION=3.7.9
+PYTHON_VERSION=3.11.10
 BUILDDIR=/tmp/electrum-mars-build
 PACKAGE=Electrum-MARS
 GIT_REPO=https://github.com/marscoin/electrum-mars
@@ -68,14 +68,14 @@ function DoCodeSignMaybe { # ARGS: infoName fileOrDirName
 }
 
 info "Installing Python $PYTHON_VERSION"
-PKG_FILE="python-${PYTHON_VERSION}-macosx10.9.pkg"
-if [ ! -f "$CACHEDIR/$PKG_FILE" ]; then
-    curl -o "$CACHEDIR/$PKG_FILE" "https://www.python.org/ftp/python/${PYTHON_VERSION}/$PKG_FILE"
-fi
-echo "bf54a14eef23467991e8c7a88c7307762e484c024a94ec1ee292ac1db3d41fc9  $CACHEDIR/$PKG_FILE" | shasum -a 256 -c \
-     || fail "python pkg checksum mismatched"
-sudo installer -pkg "$CACHEDIR/$PKG_FILE" -target / \
-    || fail "failed to install python"
+#PKG_FILE="python-${PYTHON_VERSION}-macosx10.9.pkg"
+#if [ ! -f "$CACHEDIR/$PKG_FILE" ]; then
+#    curl -o "$CACHEDIR/$PKG_FILE" "https://www.python.org/ftp/python/${PYTHON_VERSION}/$PKG_FILE"
+#fi
+#echo "bf54a14eef23467991e8c7a88c7307762e484c024a94ec1ee292ac1db3d41fc9  $CACHEDIR/$PKG_FILE" | shasum -a 256 -c \
+#     || fail "python pkg checksum mismatched"
+#sudo installer -pkg "$CACHEDIR/$PKG_FILE" -target / \
+#    || fail "failed to install python"
 
 # sanity check "python3" has the version we just installed.
 FOUND_PY_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
@@ -100,7 +100,9 @@ info "Using these versions for building $PACKAGE:"
 sw_vers
 python3 --version
 echo -n "Pyinstaller "
-pyinstaller --version
+#pyinstaller --version
+#do those manually for now
+#./venv/bin/pyinstaller --version
 
 rm -rf ./dist
 
@@ -145,46 +147,45 @@ else
 fi
 cp "$PROJECT_ROOT"/electrum_mars/libzbar.0.dylib "$CONTRIB"/osx
 
-if [ ! -f "$PROJECT_ROOT"/electrum_mars/libusb-1.0.dylib ]; then
-    info "Building libusb dylib..."
-    "$CONTRIB"/make_libusb.sh || fail "Could not build libusb dylib"
-else
-    info "Skipping libusb build: reusing already built dylib."
-fi
-cp "$PROJECT_ROOT"/electrum_mars/libusb-1.0.dylib "$CONTRIB"/osx
+#if [ ! -f "$PROJECT_ROOT"/electrum_mars/libusb-1.0.dylib ]; then
+#    info "Building libusb dylib..."
+#    "$CONTRIB"/make_libusb.sh || fail "Could not build libusb dylib"
+#else
+#    info "Skipping libusb build: reusing already built dylib."
+#fi
+#cp "$PROJECT_ROOT"/electrum_mars/libusb-1.0.dylib "$CONTRIB"/osx
 
 
 info "Installing requirements..."
-python3 -m pip install --no-dependencies --no-warn-script-location -Ir ./contrib/deterministic-build/requirements.txt \
-    || fail "Could not install requirements"
+#python3 -m pip install --no-dependencies --no-warn-script-location -Ir ./contrib/deterministic-build/requirements.txt \
+#    || fail "Could not install requirements"
 
 info "Installing hardware wallet requirements..."
-python3 -m pip install --no-dependencies --no-warn-script-location -Ir ./contrib/deterministic-build/requirements-hw.txt \
-    || fail "Could not install hardware wallet requirements"
+#python3 -m pip install --no-dependencies --no-warn-script-location -Ir ./contrib/deterministic-build/requirements-hw.txt \
+#    || fail "Could not install hardware wallet requirements"
 
 info "Installing dependencies specific to binaries..."
-brew install openssl
-export CFLAGS="-I$(brew --prefix openssl)/include $CFLAGS"
-export LDFLAGS="-L$(brew --prefix openssl)/lib $LDFLAGS"
-python3 -m pip install --no-dependencies --no-warn-script-location -Ir ./contrib/deterministic-build/requirements-binaries-mac.txt \
-    || fail "Could not install dependencies specific to binaries"
+#brew install openssl
+#export CFLAGS="-I$(brew --prefix openssl)/include $CFLAGS"
+#export LDFLAGS="-L$(brew --prefix openssl)/lib $LDFLAGS"
+#python3 -m pip install --no-dependencies --no-warn-script-location -Ir ./contrib/deterministic-build/requirements-binaries-mac.txt \
+#    || fail "Could not install dependencies specific to binaries"
 
 info "Building $PACKAGE..."
-python3 -m pip install --no-dependencies --no-warn-script-location . > /dev/null || fail "Could not build $PACKAGE"
+#python3 -m pip install --no-dependencies --no-warn-script-location . > /dev/null || fail "Could not build $PACKAGE"
 
-info "Faking timestamps..."
-find . -exec touch -t '200101220000' {} + || true
+#info "Faking timestamps..."
+#find . -exec touch -t '200101220000' {} + || true
 
 VERSION=`git describe --tags --dirty --always`
+info $VERSION
 
 info "Building binary"
-pyinstaller --noconfirm --ascii --clean --name $VERSION contrib/osx/osx.spec || fail "Could not build binary"
+#./venv/bin/pyinstaller  --noconfirm --ascii --clean --name $VERSION contrib/osx/osx.spec || fail "Could not build binary"
+info "built manually"
 
 info "Adding marscoin URI types to Info.plist"
-plutil -insert 'CFBundleURLTypes' \
-	-xml '<array><dict> <key>CFBundleURLName</key> <string>marscoin</string> <key>CFBundleURLSchemes</key> <array><string>marscoin</string></array> </dict></array>' \
-	-- dist/$PACKAGE.app/Contents/Info.plist \
-	|| fail "Could not add keys to Info.plist. Make sure the program 'plutil' exists and is installed."
+#plutil -insert 'CFBundleURLTypes' -xml '<array><dict> <key>CFBundleURLName</key> <string>marscoin</string> <key>CFBundleURLSchemes</key> <array><string>marscoin</string></array> </dict></array>' 	-- ./dist/$PACKAGE.app/Contents/Info.plist 
 
 DoCodeSignMaybe "app bundle" "dist/${PACKAGE}.app"
 
@@ -198,7 +199,7 @@ if [ ! -z "$CODESIGN_CERT" ]; then
 fi
 
 info "Creating .DMG"
-hdiutil create -fs HFS+ -volname $PACKAGE -srcfolder dist/$PACKAGE.app dist/electrum-mars-$VERSION.dmg || fail "Could not create .DMG"
+hdiutil create -fs HFS+ -volname $PACKAGE -srcfolder ./dist/$PACKAGE.app dist/electrum-mars-$VERSION.dmg || fail "Could not create .DMG"
 
 DoCodeSignMaybe ".DMG" "dist/electrum-mars-${VERSION}.dmg"
 

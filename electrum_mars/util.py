@@ -1160,9 +1160,11 @@ def make_aiohttp_session(proxy: Optional[dict], headers=None, timeout=None):
 
 
 class SilentTaskGroup(TaskGroup):
+    def __init__(self):
+        super().__init__()
+        self._closed = False
 
     def spawn(self, *args, **kwargs):
-        # don't complain if group is already closed.
         if self._closed:
             raise asyncio.CancelledError()
         return super().spawn(*args, **kwargs)

@@ -1190,25 +1190,16 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
         self._clear_addr_retry_times()
         self._set_proxy(deserialize_proxy(self.config.get('proxy')))
         self._maybe_set_oneserver()
-        await self.taskgroup.spawn(self._run_new_interface(self.default_server))
+        
+        async def init_network():
+            task = await taskgroup.spawn(self._run_new_interface(self.default_server))
+            await taskgroup.spawn(self._maintain_sessions())
+            [await taskgroup.spawn(job) for job in self._jobs]
+            return task
 
-        async def main():
-            self.logger.info("starting taskgroup.")
-            try:
-                # note: if a task finishes with CancelledError, that
-                # will NOT raise, and the group will keep the other tasks running
-                async with taskgroup as group:
-                    await group.spawn(self._maintain_sessions())
-                    [await group.spawn(job) for job in self._jobs]
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                self.logger.exception("taskgroup died.")
-            finally:
-                self.logger.info("taskgroup stopped.")
-        asyncio.run_coroutine_threadsafe(main(), self.asyncio_loop)
-
+        asyncio.create_task(init_network())
         util.trigger_callback('network_updated')
+        
 
     def start(self, jobs: Iterable = None):
         """Schedule starting the network, along with the given job co-routines.
@@ -1218,6 +1209,8 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
         """
         self._jobs = jobs or []
         asyncio.run_coroutine_threadsafe(self._start(), self.asyncio_loop)
+
+
 
     @log_exceptions
     async def stop(self, *, full_shutdown: bool = True):
