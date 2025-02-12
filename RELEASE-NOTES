@@ -1,3 +1,10 @@
+# Release 28.0.0 - (February, 2025)
+ * Added Merge Mining support
+ * Rebase with current Bitcoin Core
+ * Added Checkpoint list
+ * Minor bug fixes
+ * Tested with Marscoin ElectrumX server
+
 # Release 1.6.5 - (November, 2024)
  * Added ASERT difficulty targeting support
  * Added Checkpoint list
