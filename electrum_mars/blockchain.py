@@ -1027,7 +1027,6 @@ class Blockchain(Logger):
                 self._logger.warning(f"Skipping non-sequential header {height} (expecting {chain_height + 1})")
                 return False
                 
-            self._logger.warning(f"!!!!! CHECKING MERGE MINING BLOCK {height} !!!!!")
             # Basic structure check only
             if 'prev_block_hash' in header and 'merkle_root' in header:
                 return True
