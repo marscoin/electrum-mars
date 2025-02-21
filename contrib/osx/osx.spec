@@ -9,7 +9,7 @@ PYPKG='electrum_mars'
 MAIN_SCRIPT='run_electrum'
 ICONS_FILE=PYPKG + '/gui/icons/electrum.icns'
 
-VERSION='1.6.5'
+VERSION='28.0.1.0'
 
 electrum = os.path.abspath(".") + "/"
 electrum = '/Users/novalis78/Projects/electrum-mars/'

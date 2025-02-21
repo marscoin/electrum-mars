@@ -51,8 +51,11 @@ done
 break_legacy_easy_install
 
 info "Installing build dependencies."
-$WINE_PYTHON -m pip install --no-dependencies --no-warn-script-location \
+echo $WINE_PYTHON -m pip install --no-dependencies --no-warn-script-location \
     --cache-dir "$WINE_PIP_CACHE_DIR" -r "$CONTRIB"/deterministic-build/requirements-build-wine.txt
+
+#$WINE_PYTHON -m pip install --no-dependencies --no-warn-script-location \
+#    --cache-dir "$WINE_PIP_CACHE_DIR" -r "$CONTRIB"/deterministic-build/requirements-build-wine.txt
 
 info "Installing NSIS."
 download_if_not_exist "$CACHEDIR/$NSIS_FILENAME" "$NSIS_URL"
@@ -69,47 +72,47 @@ cp "$DLL_TARGET_DIR/libusb-1.0.dll" $WINEPREFIX/drive_c/tmp/ || fail "Could not 
 info "Building PyInstaller."
 # we build our own PyInstaller boot loader as the default one has high
 # anti-virus false positives
-(
-    if [ "$WIN_ARCH" = "win32" ] ; then
-        PYINST_ARCH="32bit"
-    elif [ "$WIN_ARCH" = "win64" ] ; then
-        PYINST_ARCH="64bit"
-    else
-        fail "unexpected WIN_ARCH: $WIN_ARCH"
-    fi
-    if [ -f "$CACHEDIR/pyinstaller/PyInstaller/bootloader/Windows-$PYINST_ARCH/runw.exe" ]; then
-        info "pyinstaller already built, skipping"
-        exit 0
-    fi
-    cd "$WINEPREFIX/drive_c/electrum-mars"
-    ELECTRUM_COMMIT_HASH=$(git rev-parse HEAD)
-    cd "$CACHEDIR"
-    rm -rf pyinstaller
-    mkdir pyinstaller
-    cd pyinstaller
-    # Shallow clone
-    git init
-    git remote add origin $PYINSTALLER_REPO
-    git fetch --depth 1 origin $PYINSTALLER_COMMIT
-    git checkout -b pinned "${PYINSTALLER_COMMIT}^{commit}"
-    rm -fv PyInstaller/bootloader/Windows-*/run*.exe || true
-    # add reproducible randomness. this ensures we build a different bootloader for each commit.
-    # if we built the same one for all releases, that might also get anti-virus false positives
-    echo "const char *electrum_tag = \"tagged by Electrum@$ELECTRUM_COMMIT_HASH\";" >> ./bootloader/src/pyi_main.c
-    pushd bootloader
-    # cross-compile to Windows using host python
-    python3 ./waf all CC="${GCC_TRIPLET_HOST}-gcc" \
-                      CFLAGS="-static \
-                              -Wno-dangling-else \
-                              -Wno-error=unused-value \
-                              -Wno-error=implicit-function-declaration \
-                              -Wno-error=int-to-pointer-cast \
-                              -Wno-error=stringop-truncation"
-    popd
-    # sanity check bootloader is there:
-    [[ -e "PyInstaller/bootloader/Windows-$PYINST_ARCH/runw.exe" ]] || fail "Could not find runw.exe in target dir!"
-) || fail "PyInstaller build failed"
-info "Installing PyInstaller."
-$WINE_PYTHON -m pip install --no-dependencies --no-warn-script-location ./pyinstaller
+#(
+#    if [ "$WIN_ARCH" = "win32" ] ; then
+#        PYINST_ARCH="32bit"
+#    elif [ "$WIN_ARCH" = "win64" ] ; then
+#        PYINST_ARCH="64bit"
+#    else
+#        fail "unexpected WIN_ARCH: $WIN_ARCH"
+#    fi
+#    if [ -f "$CACHEDIR/pyinstaller/PyInstaller/bootloader/Windows-$PYINST_ARCH/runw.exe" ]; then
+#        info "pyinstaller already built, skipping"
+#        exit 0
+#    fi
+#    cd "$WINEPREFIX/drive_c/electrum-mars"
+#    ELECTRUM_COMMIT_HASH=$(git rev-parse HEAD)
+#    cd "$CACHEDIR"
+#    rm -rf pyinstaller
+#    mkdir pyinstaller
+#    cd pyinstaller
+#    # Shallow clone
+#    git init
+#    git remote add origin $PYINSTALLER_REPO
+#    git fetch --depth 1 origin $PYINSTALLER_COMMIT
+#    git checkout -b pinned "${PYINSTALLER_COMMIT}^{commit}"
+#    rm -fv PyInstaller/bootloader/Windows-*/run*.exe || true
+#    # add reproducible randomness. this ensures we build a different bootloader for each commit.
+#    # if we built the same one for all releases, that might also get anti-virus false positives
+#    echo "const char *electrum_tag = \"tagged by Electrum@$ELECTRUM_COMMIT_HASH\";" >> ./bootloader/src/pyi_main.c
+#    pushd bootloader
+#    # cross-compile to Windows using host python
+#    python3 ./waf all CC="${GCC_TRIPLET_HOST}-gcc" \
+#                      CFLAGS="-static \
+#                              -Wno-dangling-else \
+#                              -Wno-error=unused-value \
+#                              -Wno-error=implicit-function-declaration \
+#                              -Wno-error=int-to-pointer-cast \
+#                              -Wno-error=stringop-truncation"
+#    popd
+#    # sanity check bootloader is there:
+#    [[ -e "PyInstaller/bootloader/Windows-$PYINST_ARCH/runw.exe" ]] || fail "Could not find runw.exe in target dir!"
+#) || fail "PyInstaller build failed"
+#info "Installing PyInstaller."
+#$WINE_PYTHON -m pip install --no-dependencies --no-warn-script-location ./pyinstaller
 
 info "Wine is configured."
