@@ -30,7 +30,7 @@ export DLL_TARGET_DIR="$CACHEDIR/dlls"
 
 export WINEPREFIX="/opt/wine64"
 export WINEDEBUG=-all
-export WINE_PYHOME="c:/python3"
+export WINE_PYHOME="c:/python38"
 export WINE_PYTHON="wine $WINE_PYHOME/python.exe -OO -B"
 
 . "$CONTRIB"/build_tools_util.sh
@@ -63,9 +63,9 @@ fi
 
 info "Resetting modification time in C:\Python..."
 # (Because of some bugs in pyinstaller)
-pushd /opt/wine64/drive_c/python*
-find -exec touch -d '2000-11-11T11:11:11+00:00' {} +
-popd
+#pushd /opt/wine64/drive_c/python*
+#find -exec touch -d '2000-11-11T11:11:11+00:00' {} +
+#popd
 ls -l /opt/wine64/drive_c/python*
 
 "$here/build-electrum-git.sh" || fail "build-electrum-git failed"
