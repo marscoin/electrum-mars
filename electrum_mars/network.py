@@ -430,6 +430,65 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
         if result:
             self.logger.info(f'{self.default_server} is lagging ({sh} vs {lh})')
         return result
+    
+
+    async def get_height_of_transaction(self, tx_hash: str) -> Optional[int]:
+        if not is_hash256_str(tx_hash):
+            raise Exception(f"{repr(tx_hash)} is not a txid")
+        
+        self.logger.error(f"DEBUG: Starting to check height of transaction: {tx_hash}")
+        
+        try:
+            # First get the raw transaction to check if it exists
+            self.logger.error(f"DEBUG: About to get transaction {tx_hash}")
+            raw = await self.get_transaction(tx_hash)
+            if not raw:
+                self.logger.error(f"Transaction {tx_hash} not found")
+                return None
+                    
+            self.logger.error(f"DEBUG: Got raw tx, length: {len(raw)}")
+            
+            # Get server height to determine confirmation status
+            server_height = self.get_server_height()
+            self.logger.error(f"DEBUG: Server height: {server_height}")
+            
+            # Try to get merkle verification data which includes height for confirmed txs
+            try:
+                # We don't know the height, so we'll need to request it
+                # Use blockchain.transaction.get with verbose=true
+                self.logger.error(f"DEBUG: About to send request for verbose tx {tx_hash}")
+                verbose_tx = await self.interface.session.send_request('blockchain.transaction.get', [tx_hash, True])
+                self.logger.error(f"DEBUG: Got verbose tx: {verbose_tx}")
+                
+                if 'confirmations' in verbose_tx and verbose_tx['confirmations'] > 0:
+                    # If 'height' is directly available, use it
+                    height = verbose_tx.get('height')
+                    
+                    # If height is not directly available but we have confirmations, calculate it
+                    if not height and 'confirmations' in verbose_tx:
+                        confirmations = verbose_tx['confirmations']
+                        height = server_height - confirmations + 1
+                        self.logger.error(f"DEBUG: Calculated height from confirmations: {height}")
+                    
+                    if height:
+                        self.logger.error(f"Transaction {tx_hash} confirmed at height {height}")
+                        return height
+                    else:
+                        self.logger.error(f"DEBUG: Height not found in verbose_tx and could not be calculated")
+                        return None
+                else:
+                    self.logger.error(f"Transaction {tx_hash} exists but is not confirmed")
+                    return None
+                        
+            except Exception as e:
+                self.logger.error(f"Failed to get confirmation error for {tx_hash}: {str(e)}")
+                self.logger.error(f"DEBUG: Exception type: {type(e).__name__}")
+                return None
+                    
+        except Exception as e:
+            self.logger.error(f"Error checking transaction {tx_hash}: {str(e)}")
+            self.logger.error(f"DEBUG: Exception type: {type(e).__name__}")
+            return None
 
     def _set_status(self, status):
         self.connection_status = status
@@ -1171,6 +1230,7 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
         but it is the tip of that branch (even if main interface is behind).
         """
         return self.blockchain().height()
+    
 
     def export_checkpoints(self, path):
         """Run manually to generate blockchain checkpoints.

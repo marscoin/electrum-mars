@@ -24,6 +24,8 @@
 # SOFTWARE.
 import asyncio
 import hashlib
+import time
+import traceback
 from typing import Dict, List, TYPE_CHECKING, Tuple, Set
 from collections import defaultdict
 import logging
@@ -41,6 +43,7 @@ if TYPE_CHECKING:
     from .network import Network
     from .address_synchronizer import AddressSynchronizer
 
+TX_HEIGHT_LOCAL = -2
 
 class SynchronizerFailure(Exception): pass
 
@@ -163,9 +166,122 @@ class Synchronizer(SynchronizerBase):
                 and not self.requested_tx
                 and not self._stale_histories)
 
+
+    # This is a patch for the verify_local_transactions method in the Synchronizer class
+    # The issue is that the code is trying to use wallet.db.get_tx_height() which doesn't exist
+    # Instead it should use wallet.get_tx_height() which is implemented in AddressSynchronizer
+
+    async def verify_local_transactions(self):
+        """Check for local transactions that might be confirmed on blockchain."""
+        from .util import TxMinedInfo
+        from .blockchain import hash_header
+        import time
+        
+        wallet = self.wallet
+        local_txs = []
+        
+        # Get all transactions with local status
+        try:
+            all_txs = wallet.db.list_transactions()
+            self.logger.error(f"Total number of transactions in wallet: {len(all_txs)}")
+            
+            for tx_hash in all_txs:
+                try:
+                    tx_info = wallet.get_tx_height(tx_hash)
+                    if tx_info.height == TX_HEIGHT_LOCAL:
+                        local_txs.append(tx_hash)
+                except Exception as e:
+                    self.logger.error(f"Error checking tx height for {tx_hash}: {str(e)}")
+        except Exception as e:
+            self.logger.error(f"Error listing transactions: {str(e)}")
+            return
+        
+        if not local_txs:
+            self.logger.error("No local transactions found to check")
+            return
+        
+        self.logger.info(f"Checking {len(local_txs)} local transactions for confirmations...")
+        
+        for tx_hash in local_txs:
+            try:
+                self.logger.error(f"Checking status of local tx: {tx_hash}")
+                
+                # Get the transaction
+                try:
+                    raw_tx = await self.network.get_transaction(tx_hash)
+                    if not raw_tx:
+                        self.logger.error(f"Failed to get transaction {tx_hash}")
+                        continue
+                    
+                    tx = Transaction(raw_tx)
+                    self.logger.error(f"Successfully fetched transaction {tx_hash}")
+                    
+                    # Check if this transaction is in a block
+                    try:
+                        current_height = self.network.get_local_height()
+                        self.logger.error(f"Current blockchain height: {current_height}")
+                        
+                        block_height = await self.network.get_height_of_transaction(tx_hash)
+                        
+                        if block_height:
+                            self.logger.info(f"Transaction {tx_hash} confirmed at height {block_height}")
+                            
+                            # Create TxMinedInfo object
+                            header_hash = None
+                            txpos = 0  # We don't know the position, default to 0
+                            
+                            # Try to get the header hash using blockchain's read_header method
+                            try:
+                                if self.network.blockchain():
+                                    header = self.network.blockchain().read_header(block_height)
+                                    if header:
+                                        header_hash = hash_header(header)
+                            except Exception as e:
+                                self.logger.error(f"Failed to get header hash: {str(e)}")
+                            
+                            # Get the timestamp from the block header if possible
+                            timestamp = None
+                            try:
+                                if self.network.blockchain():
+                                    header = self.network.blockchain().read_header(block_height)
+                                    if header:
+                                        timestamp = header.get('timestamp')
+                            except Exception as e:
+                                self.logger.error(f"Failed to get timestamp: {str(e)}")
+                            
+                            # If we couldn't get the timestamp from the header, use current time
+                            if timestamp is None:
+                                timestamp = int(time.time())
+                            
+                            # Create the TxMinedInfo object
+                            tx_mined_info = TxMinedInfo(height=block_height, 
+                                                    conf=current_height - block_height + 1,
+                                                    timestamp=timestamp, 
+                                                    txpos=txpos,
+                                                    header_hash=header_hash)
+                            
+                            # Update the transaction status in the wallet
+                            wallet.add_verified_tx(tx_hash, tx_mined_info)
+                            self.logger.error(f"Updated tx {tx_hash} with height {block_height}")
+                            
+                    except Exception as e:
+                        self.logger.error(f"Error checking blockchain for {tx_hash}: {str(e)}")
+                    
+                except Exception as e:
+                    self.logger.error(f"Failed to get transaction {tx_hash}: {str(e)}")
+                    continue
+                    
+            except Exception as e:
+                self.logger.error(f"Unexpected error checking local tx {tx_hash}: {str(e)}")
+                continue
+
+
+            
     async def _on_address_status(self, addr, status):
         history = self.wallet.db.get_addr_history(addr)
+        self.logger.debug(f"Address status received for {addr}: old_status={history_status(history)}, new_status={status}")
         if history_status(history) == status:
+            self.logger.debug(f"No change in status for {addr}, ignoring update")
             return
         # No point in requesting history twice for the same announced status.
         # However if we got announced a new status, we should request history again:
@@ -257,10 +373,41 @@ class Synchronizer(SynchronizerBase):
         # add addresses to bootstrap
         for addr in random_shuffled_copy(self.wallet.get_addresses()):
             await self._add_address(addr)
+        
+        last_local_tx_check = 0
+        verification_in_progress = False
+        
         # main loop
         while True:
             await asyncio.sleep(0.1)
-            await run_in_thread(self.wallet.synchronize)
+            try:
+                await run_in_thread(self.wallet.synchronize)
+            except Exception as e:
+                self.logger.error(f"Error in wallet synchronize: {str(e)}")
+
+            # Check if wallet is already synchronized before attempting verification
+            if self.wallet.is_up_to_date() and not verification_in_progress:
+                current_time = time.time()
+                # Run less frequently (every 5 minutes instead of every minute)
+                if current_time - last_local_tx_check > 300:  
+                    try:
+                        # Set flag to prevent concurrent verification
+                        verification_in_progress = True
+                        self.logger.debug("Starting local transaction verification")
+                        
+                        # Use a timeout to prevent it from running too long
+                        try:
+                            await asyncio.wait_for(self.verify_local_transactions(), timeout=60)
+                            self.logger.debug("Local transaction verification completed")
+                        except asyncio.TimeoutError:
+                            self.logger.error("Local transaction verification timed out after 60 seconds")
+                        
+                        last_local_tx_check = current_time
+                    except Exception as e:
+                        self.logger.error(f"Error in verify_local_transactions: {str(e)}")
+                    finally:
+                        verification_in_progress = False
+                
             up_to_date = self.is_up_to_date()
             if (up_to_date != self.wallet.is_up_to_date()
                     or up_to_date and self._processed_some_notifications):

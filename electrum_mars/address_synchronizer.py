@@ -404,6 +404,8 @@ class AddressSynchronizer(Logger):
     def receive_history_callback(self, addr: str, hist, tx_fees: Dict[str, int]):
         with self.lock:
             old_hist = self.get_address_history(addr)
+            self.logger.debug(f"Receive history for {addr}: old_len={len(old_hist)}, new_len={len(hist)}")
+            self.logger.debug(f"New history items: {[h[0] for h in hist if h not in old_hist]}")
             for tx_hash, height in old_hist:
                 if (tx_hash, height) not in hist:
                     # make tx local
