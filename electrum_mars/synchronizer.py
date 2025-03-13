@@ -361,7 +361,25 @@ class Synchronizer(SynchronizerBase):
         # callbacks
         util.trigger_callback('new_transaction', self.wallet, tx)
 
+    async def _manage_address_refresh(self):
+        """Periodically refresh address history for subscribed addresses"""
+        while True:
+            await asyncio.sleep(60)  # Check every minute
+            if not self.network.is_connected():
+                continue
+                
+            self.logger.error("Running manual address history refresh")
+            for addr in self.wallet.get_addresses():
+                h = address_to_scripthash(addr)
+                await self.interface.session.send_request('blockchain.scripthash.get_history', [h])
+                self.logger.error(f"Address {addr} history")
+                await asyncio.sleep(0.1)  # Avoid overwhelming the server
+            self.logger.error("Completed manual address history refresh")
+
     async def main(self):
+        addr = "MGbiwxErpjZWsi67R4g8x1hhsng8Xhgywa"
+        h = address_to_scripthash(addr)
+        print(f"Scripthash for {addr}: {h}")
         self.wallet.set_up_to_date(False)
         # request missing txns, if any
         for addr in random_shuffled_copy(self.wallet.db.get_history()):
@@ -375,7 +393,9 @@ class Synchronizer(SynchronizerBase):
             await self._add_address(addr)
         
         last_local_tx_check = 0
+        last_addr_check = 0
         verification_in_progress = False
+        refresh_in_progress = False
         
         # main loop
         while True:
@@ -385,29 +405,87 @@ class Synchronizer(SynchronizerBase):
             except Exception as e:
                 self.logger.error(f"Error in wallet synchronize: {str(e)}")
 
-            # Check if wallet is already synchronized before attempting verification
-            if self.wallet.is_up_to_date() and not verification_in_progress:
-                current_time = time.time()
-                # Run less frequently (every 5 minutes instead of every minute)
-                if current_time - last_local_tx_check > 300:  
+            current_time = time.time()
+            
+            # Check if wallet is already synchronized
+            if self.wallet.is_up_to_date():
+                # Periodically verify local transactions (every 5 minutes)
+                if current_time - last_local_tx_check > (5 * 60) and not verification_in_progress:  
                     try:
-                        # Set flag to prevent concurrent verification
                         verification_in_progress = True
-                        self.logger.debug("Starting local transaction verification")
-                        
-                        # Use a timeout to prevent it from running too long
+                        self.logger.error("Starting local transaction verification")
                         try:
                             await asyncio.wait_for(self.verify_local_transactions(), timeout=60)
-                            self.logger.debug("Local transaction verification completed")
+                            self.logger.error("Local transaction verification completed")
                         except asyncio.TimeoutError:
                             self.logger.error("Local transaction verification timed out after 60 seconds")
-                        
                         last_local_tx_check = current_time
                     except Exception as e:
                         self.logger.error(f"Error in verify_local_transactions: {str(e)}")
                     finally:
                         verification_in_progress = False
                 
+                # Periodically check for updates to wallet addresses (every 30 seconds)
+                if current_time - last_addr_check > 30 and not refresh_in_progress:
+                    try:
+                        refresh_in_progress = True
+                        self.logger.error("Starting address history refresh cycle")
+                        
+                        # Log the current addresses we're checking
+                        addresses = self.wallet.get_addresses()
+                        #self.logger.error(f"Checking {len(addresses)} addresses for updates")
+                        
+                        for addr in random_shuffled_copy(addresses):
+                            #self.logger.error(f"Checking history for address: {addr}")
+                            
+                            h = address_to_scripthash(addr)
+                            self.scripthash_to_address[h] = addr
+                            
+                            try:
+                                # Get current history from wallet
+                                old_history = self.wallet.db.get_addr_history(addr)
+                                old_hist_status = history_status(old_history)
+                                self.logger.error(f"Current history status for {addr}: {old_hist_status}")
+                                
+                                # Get fresh history from server
+                                async with self._network_request_semaphore:
+                                    history_result = await self.session.send_request('blockchain.scripthash.get_history', [h])
+                                    #self.logger.error(f"Server returned {len(history_result)} history items for {addr}")
+                                    
+                                    # Convert to same format as wallet history
+                                    new_history = list(map(lambda item: (item['tx_hash'], item['height']), history_result))
+                                    new_hist_status = history_status(new_history)
+                                    #self.logger.error(f"New history status for {addr}: {new_hist_status}")
+                                    
+                                    # Compare history statuses
+                                    if old_hist_status != new_hist_status:
+                                        self.logger.error(f"History changed for {addr}! Processing update...")
+                                        
+                                        # Process similarly to _on_address_status
+                                        hist = new_history
+                                        tx_fees = [(item['tx_hash'], item.get('fee')) for item in history_result]
+                                        tx_fees = dict(filter(lambda x:x[1] is not None, tx_fees))
+                                        
+                                        # Store received history
+                                        self.wallet.receive_history_callback(addr, hist, tx_fees)
+                                        
+                                        # Request transactions we don't have
+                                        await self._request_missing_txs(hist)
+                                    # else:
+                                    #     self.logger.error(f"No history change for {addr}")
+                                        
+                            except Exception as e:
+                                self.logger.error(f"Error checking history for {addr}: {str(e)}")
+                                self.logger.error(f"Exception details: {traceback.format_exc()}")
+                            
+                        self.logger.error("Completed address history refresh cycle")
+                        last_addr_check = current_time
+                    except Exception as e:
+                        self.logger.error(f"Error in address history refresh: {str(e)}")
+                        self.logger.error(f"Exception details: {traceback.format_exc()}")
+                    finally:
+                        refresh_in_progress = False
+                    
             up_to_date = self.is_up_to_date()
             if (up_to_date != self.wallet.is_up_to_date()
                     or up_to_date and self._processed_some_notifications):

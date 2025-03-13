@@ -169,8 +169,15 @@ def serialize_header(header_dict: dict) -> str:
 def deserialize_header(s: bytes, height: int) -> dict:
     if not s:
         raise InvalidHeader('Invalid header: {}'.format(s))
+    
+    # For AuxPoW headers, we only need to extract data from the first 80 bytes
     if len(s) != HEADER_SIZE:
-        raise InvalidHeader('Invalid header length: {}'.format(len(s)))
+        if len(s) > HEADER_SIZE:
+            # Extract just the main header part
+            s = s[:HEADER_SIZE]
+        else:
+            raise InvalidHeader('Invalid header length: {}'.format(len(s)))
+    
     hex_to_int = lambda s: int.from_bytes(s, byteorder='little')
     h = {}
     h['version'] = hex_to_int(s[0:4])

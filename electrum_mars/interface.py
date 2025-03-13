@@ -708,18 +708,24 @@ class Interface(Logger):
             item = await header_queue.get()
             raw_header = item[0]
             height = raw_header['height']
-            header = blockchain.deserialize_header(bfh(raw_header['hex']), height)
-            self.tip_header = header
-            self.tip = height
-            if self.tip < constants.net.max_checkpoint():
-                raise GracefulDisconnect('server tip below max checkpoint')
-            self._mark_ready()
-            await self._process_header_at_tip()
-            # header processing done
-            util.trigger_callback('blockchain_updated')
-            util.trigger_callback('network_updated')
-            await self.network.switch_unwanted_fork_interface()
-            await self.network.switch_lagging_interface()
+            
+            try:
+                header = blockchain.deserialize_header(bfh(raw_header['hex']), height)
+                self.tip_header = header
+                self.tip = height
+                if self.tip < constants.net.max_checkpoint():
+                    raise GracefulDisconnect('server tip below max checkpoint')
+                self._mark_ready()
+                await self._process_header_at_tip()
+                # header processing done
+                util.trigger_callback('blockchain_updated')
+                util.trigger_callback('network_updated')
+                await self.network.switch_unwanted_fork_interface()
+                await self.network.switch_lagging_interface()
+            except blockchain.InvalidHeader as e:
+                self.logger.warning(f"Received invalid header: {str(e)}, trying to continue")
+                # Skip this header but continue the loop
+                continue
 
     async def _process_header_at_tip(self):
         height, header = self.tip, self.tip_header

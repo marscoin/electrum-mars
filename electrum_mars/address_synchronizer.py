@@ -186,6 +186,9 @@ class AddressSynchronizer(Logger):
             self.synchronizer = Synchronizer(self)
             self.verifier = SPV(self.network, self)
             util.register_callback(self.on_blockchain_updated, ['blockchain_updated'])
+            # Start address refresh task
+            if hasattr(self.synchronizer, '_manage_address_refresh'):
+                asyncio.ensure_future(self.synchronizer._manage_address_refresh())
 
     def on_blockchain_updated(self, event, *args):
         self._get_addr_balance_cache = {}  # invalidate cache
