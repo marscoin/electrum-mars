@@ -1,13 +1,13 @@
 [app]
 
 # (str) Title of your application
-title = Electrum-LTC
+title = Electrum-Mars
 
 # (str) Package name
 package.name = Electrum_LTC
 
 # (str) Package domain (needed for android/ios packaging)
-package.domain = org.electrum_ltc
+package.domain = org.electrum_mars
 
 # (str) Source code where the main.py live
 source.dir = .
@@ -20,10 +20,10 @@ source.exclude_exts = spec
 
 # (list) List of directory to exclude (let empty to not exclude anything)
 source.exclude_dirs = bin, build, dist, contrib, env,
-    electrum_ltc/tests,
-    electrum_ltc/www,
-    electrum_ltc/gui/qt,
-    electrum_ltc/gui/kivy,
+    electrum_mars/tests,
+    electrum_mars/www,
+    electrum_mars/gui/qt,
+    electrum_mars/gui/kivy,
     packages/qdarkstyle,
     packages/qtpy,
     packages/bin,
@@ -39,7 +39,7 @@ source.exclude_patterns = Makefile,setup*,
 
 # (str) Application versioning (method 1)
 version.regex = APK_VERSION = '(.*)'
-version.filename = %(source.dir)s/electrum_ltc/version.py
+version.filename = %(source.dir)s/electrum_mars/version.py
 
 # (str) Application versioning (method 2)
 #version = 1.9.8
@@ -62,12 +62,12 @@ requirements =
 
 # (str) Presplash of the application
 #presplash.filename = %(source.dir)s/gui/kivy/theming/splash.png
-presplash.filename = %(source.dir)s/electrum_ltc/gui/icons/electrum_presplash.png
+presplash.filename = %(source.dir)s/electrum_mars/gui/icons/electrum_presplash.png
 
 # (str) Icon of the application
-icon.filename = %(source.dir)s/electrum_ltc/gui/icons/android_electrum_icon_legacy.png
-icon.adaptive_foreground.filename = %(source.dir)s/electrum_ltc/gui/icons/android_electrum_icon_foreground.png
-icon.adaptive_background.filename = %(source.dir)s/electrum_ltc/gui/icons/android_electrum_icon_background.png
+icon.filename = %(source.dir)s/electrum_mars/gui/icons/android_electrum_icon_legacy.png
+icon.adaptive_foreground.filename = %(source.dir)s/electrum_mars/gui/icons/android_electrum_icon_foreground.png
+icon.adaptive_background.filename = %(source.dir)s/electrum_mars/gui/icons/android_electrum_icon_background.png
 
 # (str) Supported orientation (one of landscape, portrait or all)
 orientation = portrait
@@ -138,11 +138,11 @@ android.add_jars = .buildozer/android/platform/*/build/libs_collections/Electrum
 
 # (list) List of Java files to add to the android project (can be java or a
 # directory containing the files)
-android.add_src = electrum_ltc/gui/kivy/data/java-classes/
+android.add_src = electrum_mars/gui/kivy/data/java-classes/
 
 android.gradle_dependencies = me.dm7.barcodescanner:zxing:1.9.8
 
-android.add_activities = org.electrum_ltc.qr.SimpleScannerActivity
+android.add_activities = org.electrum_mars.qr.SimpleScannerActivity
 
 # (str) python-for-android branch to use, if not master, useful to try
 # not yet merged features.

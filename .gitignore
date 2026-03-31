@@ -54,3 +54,5 @@ electrum_ltc/*.so.0
 electrum_ltc/*.dll
 electrum_ltc/*.dylib
 contrib/osx/*.dylib
+venv
+electrum_mars/libsecp256k1.0.dylib
