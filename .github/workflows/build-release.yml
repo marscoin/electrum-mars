@@ -233,9 +233,13 @@ jobs:
 
       - name: Create DMG
         run: |
+          sleep 5
           hdiutil create -fs HFS+ -volname "Electrum-Mars" \
             -srcfolder dist/Electrum-Mars.app \
-            dist/Electrum-Mars-${{ env.ELECTRUM_VERSION }}-macos-arm64.dmg
+            dist/Electrum-Mars-${{ env.ELECTRUM_VERSION }}-macos-arm64.dmg || \
+          (sleep 10 && hdiutil create -fs HFS+ -volname "Electrum-Mars" \
+            -srcfolder dist/Electrum-Mars.app \
+            dist/Electrum-Mars-${{ env.ELECTRUM_VERSION }}-macos-arm64.dmg)
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
