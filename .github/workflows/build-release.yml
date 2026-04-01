@@ -130,6 +130,26 @@ jobs:
             aiohttp aiohttp-socks 'aiorpcx>=0.22,<0.26' dnspython `
             'protobuf>=3.12,<4' certifi qrcode attrs bitstring qdarkstyle
 
+      - name: Build libsecp256k1
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/bitcoin-core/secp256k1.git
+          cd secp256k1
+          mkdir build && cd build
+          cmake -G "Visual Studio 17 2022" -A x64 -DSECP256K1_BUILD_TESTS=OFF -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF -DSECP256K1_BUILD_BENCHMARK=OFF -DSECP256K1_ENABLE_MODULE_RECOVERY=ON ..
+          cmake --build . --config Release
+          cp Release/secp256k1.dll ../../electrum_mars/libsecp256k1-0.dll || true
+          # Also try other output locations
+          find . -name "*.dll" -exec cp {} ../../electrum_mars/libsecp256k1-0.dll \; 2>/dev/null || true
+          ls -la ../../electrum_mars/libsecp256k1*.dll 2>/dev/null || echo "WARNING: dll not found, trying vcpkg"
+
+      - name: Fallback - vcpkg libsecp256k1
+        if: ${{ hashFiles('electrum_mars/libsecp256k1-0.dll') == '' }}
+        shell: bash
+        run: |
+          vcpkg install secp256k1:x64-windows 2>/dev/null || true
+          find /c/vcpkg -name "secp256k1*.dll" -exec cp {} electrum_mars/libsecp256k1-0.dll \; 2>/dev/null || true
+
       - name: Create locale directory
         run: mkdir -p electrum_mars/locale
         shell: bash
