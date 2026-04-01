@@ -68,7 +68,7 @@ ca_path = certifi.where()
 
 BUCKET_NAME_OF_ONION_SERVERS = 'onion'
 
-MAX_INCOMING_MSG_SIZE = 1_000_000  # in bytes
+MAX_INCOMING_MSG_SIZE = 5_000_000  # in bytes (increased for AuxPoW header chunks)
 
 _KNOWN_NETWORK_PROTOCOLS = {'t', 's'}
 PREFERRED_NETWORK_PROTOCOL = 's'
@@ -495,8 +495,13 @@ class Interface(Logger):
             sslc = ca_sslc
         else:
             # pinned self-signed cert
-            sslc = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH, cafile=self.cert_path)
+            # Note: ssl.create_default_context(cafile=...) can fail on Python 3.13+
+            # if the cert lacks CA basic constraints (common with ElectrumX self-signed certs).
+            # Use load_verify_locations instead, which is more lenient.
+            sslc = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             sslc.check_hostname = False
+            sslc.verify_mode = ssl.CERT_REQUIRED
+            sslc.load_verify_locations(self.cert_path)
         return sslc
 
     def handle_disconnect(func):
@@ -638,14 +643,22 @@ class Interface(Logger):
         assert_non_negative_integer(res['count'])
         assert_non_negative_integer(res['max'])
         assert_hex_str(res['hex'])
-        if len(res['hex']) != HEADER_SIZE * 2 * res['count']:
-            raise RequestCorrupted('inconsistent chunk hex and count')
+        expected_hex_len = HEADER_SIZE * 2 * res['count']
+        if len(res['hex']) < expected_hex_len:
+            raise RequestCorrupted('chunk hex too short for header count')
+        # AuxPoW blocks: server may send variable-length headers (80-byte child + auxpow data).
+        # Strip to 80-byte cores before passing to connect_chunk.
+        chunk_hex = res['hex']
+        if len(chunk_hex) > expected_hex_len:
+            raw_data = bfh(chunk_hex)
+            stripped = blockchain.strip_auxpow_headers(raw_data, res['count'])
+            chunk_hex = stripped.hex()
         # we never request more than 2016 headers, but we enforce those fit in a single response
         if res['max'] < 2016:
             raise RequestCorrupted(f"server uses too low 'max' count for block.headers: {res['max']} < 2016")
         if res['count'] != size:
             raise RequestCorrupted(f"expected {size} headers but only got {res['count']}")
-        conn = self.blockchain.connect_chunk(index, res['hex'])
+        conn = self.blockchain.connect_chunk(index, chunk_hex)
         if not conn:
             return conn, 0
         return conn, res['count']

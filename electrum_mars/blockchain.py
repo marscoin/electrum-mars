@@ -65,6 +65,69 @@ class MissingHeader(Exception):
 class InvalidHeader(Exception):
     pass
 
+
+def _read_varint(data: bytes, offset: int):
+    """Read a Bitcoin-style varint from data at offset."""
+    import struct
+    n = data[offset]
+    if n < 0xfd:
+        return n, offset + 1
+    elif n == 0xfd:
+        return struct.unpack_from('<H', data, offset + 1)[0], offset + 3
+    elif n == 0xfe:
+        return struct.unpack_from('<I', data, offset + 1)[0], offset + 5
+    else:
+        return struct.unpack_from('<Q', data, offset + 1)[0], offset + 9
+
+
+def strip_auxpow_headers(raw_data: bytes, count: int) -> bytes:
+    """Strip AuxPoW data from variable-length headers, returning only 80-byte cores.
+
+    AuxPoW blocks have version bit 8 set. After the standard 80-byte header,
+    they include: coinbase tx, merkle branches, chain merkle branches, parent header.
+    This function walks the variable-length data and extracts just the 80-byte headers.
+    """
+    if len(raw_data) == HEADER_SIZE * count:
+        return raw_data  # already standard 80-byte headers
+
+    result = bytearray()
+    offset = 0
+    for i in range(count):
+        # Extract 80-byte header
+        result.extend(raw_data[offset:offset + HEADER_SIZE])
+        ver = int.from_bytes(raw_data[offset:offset + 4], byteorder='little')
+        offset += HEADER_SIZE
+
+        if ver & VERSION_AUXPOW:
+            # Skip AuxPoW data:
+            # 1. Coinbase transaction (CMerkleTx):
+            #    - nVersion (4 bytes)
+            offset += 4
+            #    - vin
+            vin_count, offset = _read_varint(raw_data, offset)
+            for _ in range(vin_count):
+                offset += 36  # prevout hash + index
+                script_len, offset = _read_varint(raw_data, offset)
+                offset += script_len + 4  # scriptSig + nSequence
+            #    - vout
+            vout_count, offset = _read_varint(raw_data, offset)
+            for _ in range(vout_count):
+                offset += 8  # nValue
+                script_len, offset = _read_varint(raw_data, offset)
+                offset += script_len  # scriptPubKey
+            #    - nLockTime + hashBlock
+            offset += 4 + 32
+            #    - vMerkleBranch + nIndex
+            branch_len, offset = _read_varint(raw_data, offset)
+            offset += branch_len * 32 + 4
+            # 2. vChainMerkleBranch + nChainIndex
+            chain_branch_len, offset = _read_varint(raw_data, offset)
+            offset += chain_branch_len * 32 + 4
+            # 3. parentBlock header (80 bytes)
+            offset += HEADER_SIZE
+
+    return bytes(result)
+
 def serialize_header(header_dict: dict) -> str:
     s = int_to_hex(header_dict['version'], 4) \
         + rev_hex(header_dict['prev_block_hash']) \
@@ -572,10 +635,34 @@ class Blockchain(Logger):
             return self._get_target_asert(height, chunk_headers)
 
     def _read_header_from_chunk_or_disk(self, height: int, chunk_headers: dict = None):
-        """Read a header, checking chunk_headers cache first (for in-chunk lookback)."""
+        """Read a header, checking chunk_headers cache first (for in-chunk lookback),
+        then disk, then checkpoint lookback headers."""
         if chunk_headers and height in chunk_headers:
             return chunk_headers[height]
-        return self.read_header(height)
+        header = self.read_header(height)
+        if header is not None:
+            return header
+        # Fall back to checkpoint lookback headers.
+        # Each checkpoint stores 25 headers near the chunk boundary for DGW3 lookback.
+        return self._read_header_from_checkpoints(height)
+
+    _checkpoint_headers_cache = None  # class-level cache: height -> header_hex
+
+    def _read_header_from_checkpoints(self, height: int):
+        """Try to find a header in the checkpoint lookback data."""
+        if Blockchain._checkpoint_headers_cache is None:
+            # Build lookup dict on first use
+            cache = {}
+            for cp_entry in self.checkpoints:
+                if len(cp_entry) < 3:
+                    continue
+                for h_height, h_hex in cp_entry[2]:
+                    cache[h_height] = h_hex
+            Blockchain._checkpoint_headers_cache = cache
+        h_hex = Blockchain._checkpoint_headers_cache.get(height)
+        if h_hex is not None:
+            return deserialize_header(bfh(h_hex), height)
+        return None
 
     def _get_target_dgw3(self, height: int, chunk_headers: dict = None) -> int:
         """DarkGravityWave v3 — ported from marscoin/src/pow.cpp:371-457.
@@ -642,6 +729,8 @@ class Blockchain(Logger):
         bn_new = self.bits_to_target(self.target_to_bits(bn_new))
         return bn_new
 
+    _asert_anchor_header_cache = None  # cached anchor block header
+
     def _get_target_asert(self, height: int, chunk_headers: dict = None) -> int:
         """ASERT (Absolutely Scheduled Exponential Rising Targets).
 
@@ -654,8 +743,10 @@ class Blockchain(Logger):
         if height <= anchor_height:
             return self.bits_to_target(anchor_bits)
 
-        # Get the anchor block and the previous block
-        anchor_header = self._read_header_from_chunk_or_disk(anchor_height, chunk_headers)
+        # Get the anchor block (cached for performance)
+        if Blockchain._asert_anchor_header_cache is None:
+            Blockchain._asert_anchor_header_cache = self._read_header_from_chunk_or_disk(anchor_height, chunk_headers)
+        anchor_header = Blockchain._asert_anchor_header_cache
         last_header = self._read_header_from_chunk_or_disk(height - 1, chunk_headers)
 
         if anchor_header is None:
@@ -671,8 +762,14 @@ class Blockchain(Logger):
         anchor_target = self.bits_to_target(anchor_bits)
 
         # Calculate exponent: ((timeDiff - spacing * (heightDiff + 1)) * 65536) / halfLife
+        # Note: must use C++-style integer division (truncate toward zero),
+        # not Python's // (floor division toward negative infinity).
         numerator = (time_diff - POW_TARGET_SPACING * (height_diff + 1)) * 65536
-        exponent = numerator // ASERT_HALF_LIFE
+        # C++ truncation: sign(n/d) * (abs(n) // abs(d))
+        if (numerator < 0) != (ASERT_HALF_LIFE < 0):
+            exponent = -(abs(numerator) // abs(ASERT_HALF_LIFE))
+        else:
+            exponent = abs(numerator) // abs(ASERT_HALF_LIFE)
 
         # Decompose into integer and fractional parts
         shifts = exponent >> 16
