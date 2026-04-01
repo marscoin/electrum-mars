@@ -7,6 +7,5 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #329 | 8:42 PM | ✅ | Bundled native library dependencies for macOS distribution | ~359 |
 | #326 | 8:41 PM | 🟣 | Completed Marscoin UI branding replacing all Litecoin references and assets | ~513 |
 </claude-mem-context>

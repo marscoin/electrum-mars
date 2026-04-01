@@ -245,6 +245,13 @@ class AtomicSwapTab(QWidget):
         self._update_automaker_status()
 
     def _refresh_offers(self):
+        # Fetch from ElectrumX in the background
+        if self.window.network:
+            try:
+                coro = self.orderbook.fetch_from_electrumx(self.window.network)
+                self.window.network.run_from_another_thread(coro)
+            except Exception:
+                pass  # ElectrumX may not support atomicswap yet
         offers = self.orderbook.get_offers()
         self.offers_table.setRowCount(len(offers))
         for i, offer in enumerate(offers):
@@ -344,22 +351,31 @@ class AtomicSwapTab(QWidget):
 
     def _accept_offer(self, offer: SwapOffer):
         """Accept a swap offer (taker flow)."""
-        msg = _(
-            'Accept this swap offer?\n\n'
+        msg = (
+            f'Accept this swap offer?\n\n'
             f'You send: {offer.btc_amount:.8f} BTC\n'
             f'You receive: {offer.mars_amount:.4f} MARS\n'
             f'Rate: {offer.rate:.8f} BTC/MARS\n\n'
-            'You will need to send BTC to a generated HTLC address. '
-            'The swap will complete automatically once confirmed.'
+            f'You will need to send BTC to a generated HTLC address. '
+            f'The swap will complete automatically once confirmed.'
         )
-        reply = QMessageBox.question(self, _('Accept Offer'), msg,
+        reply = QMessageBox.question(self, 'Accept Offer', msg,
                                      QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
 
-        # TODO: Get current BTC block height from mempool.space
-        # For now use a placeholder
+        # Get current BTC block height from mempool.space
         btc_height = 850000
+        try:
+            from electrum_mars.btc_monitor import BtcMonitor
+            monitor = BtcMonitor()
+            import asyncio
+            loop = asyncio.get_event_loop()
+            h = loop.run_until_complete(monitor.get_block_height())
+            if h:
+                btc_height = h
+        except Exception:
+            pass
 
         swap = self.engine.create_taker_swap(
             mars_amount_sat=offer.mars_amount_sat,
@@ -372,12 +388,9 @@ class AtomicSwapTab(QWidget):
             current_btc_height=btc_height,
         )
 
-        QMessageBox.information(self, _('Swap Created'),
-            _(f'Swap initiated!\n\n'
-              f'Send exactly {offer.btc_amount:.8f} BTC to:\n'
-              f'{swap.btc_htlc_address}\n\n'
-              f'The swap will complete automatically once your BTC '
-              f'is confirmed and the maker claims it.'))
+        # Show BTC HTLC address with QR code
+        d = BtcPaymentDialog(self, swap)
+        d.exec_()
 
         self._refresh_all()
 
@@ -502,12 +515,25 @@ class CreateOfferDialog(QDialog):
         )
         self.orderbook.add_my_offer(offer)
 
+        # Publish to ElectrumX relay
+        published = False
+        if self.engine.network:
+            try:
+                from dataclasses import asdict
+                coro = self.orderbook.publish_to_electrumx(
+                    self.engine.network, offer)
+                self.engine.network.run_from_another_thread(coro)
+                published = True
+            except Exception as e:
+                _logger.warning(f"Could not publish to ElectrumX: {e}")
+
+        pub_msg = "Published to network!" if published else \
+            "Share the offer JSON from the Manual Exchange tab."
         QMessageBox.information(self, _('Offer Created'),
-            _(f'Swap offer created!\n\n'
-              f'Selling: {mars_sat/1e8:.4f} MARS\n'
-              f'For: {btc_sat/1e8:.8f} BTC\n\n'
-              f'Share the offer JSON from the Manual Exchange tab, '
-              f'or wait for someone to accept it.'))
+            f'Swap offer created!\n\n'
+            f'Selling: {mars_sat/1e8:.4f} MARS\n'
+            f'For: {btc_sat/1e8:.8f} BTC\n\n'
+            f'{pub_msg}')
 
         self.accept()
 
@@ -665,3 +691,81 @@ class AutoMakerDialog(QDialog):
                 'Offers will be created and refreshed automatically based on\n'
                 'the live MARS/BTC price from price.marscoin.org.')
         self.accept()
+
+
+class BtcPaymentDialog(QDialog):
+    """Shows the BTC HTLC address with QR code for the taker to send BTC."""
+
+    def __init__(self, parent, swap: SwapData):
+        QDialog.__init__(self, parent)
+        self.swap = swap
+        self.setWindowTitle('Send BTC to Complete Swap')
+        self.setMinimumWidth(450)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        header = QLabel('Send BTC to this address')
+        header.setFont(QFont('', 14, QFont.Bold))
+        header.setAlignment(Qt.AlignCenter)
+        layout.addWidget(header)
+
+        # QR Code
+        try:
+            import qrcode
+            from PyQt5.QtGui import QPixmap, QImage
+            from io import BytesIO
+
+            qr = qrcode.QRCode(version=1, box_size=6, border=2)
+            qr.add_data(self.swap.btc_htlc_address)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+
+            buffer = BytesIO()
+            img.save(buffer, format='PNG')
+            buffer.seek(0)
+
+            qimage = QImage()
+            qimage.loadFromData(buffer.read())
+            pixmap = QPixmap.fromImage(qimage)
+
+            qr_label = QLabel()
+            qr_label.setPixmap(pixmap)
+            qr_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(qr_label)
+        except Exception as e:
+            layout.addWidget(QLabel(f'(QR unavailable: {e})'))
+
+        # Address
+        addr_label = QLabel(self.swap.btc_htlc_address or 'Address not generated')
+        addr_label.setFont(QFont('Courier', 11))
+        addr_label.setAlignment(Qt.AlignCenter)
+        addr_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        addr_label.setStyleSheet("background: #f0f0f0; padding: 10px; border-radius: 5px;")
+        layout.addWidget(addr_label)
+
+        copy_btn = QPushButton('Copy Address')
+        copy_btn.clicked.connect(lambda: self._copy(self.swap.btc_htlc_address))
+        layout.addWidget(copy_btn)
+
+        btc_amount = self.swap.btc_amount_sat / 1e8
+        mars_amount = self.swap.mars_amount_sat / 1e8
+        info = QLabel(
+            f'\nSend exactly: {btc_amount:.8f} BTC\n'
+            f'You will receive: {mars_amount:.4f} MARS\n\n'
+            f'Once your BTC is confirmed on the Bitcoin blockchain,\n'
+            f'the swap will complete automatically.\n\n'
+            f'Timelock: ~6 hours (your BTC is refundable if swap fails)'
+        )
+        info.setAlignment(Qt.AlignCenter)
+        layout.addWidget(info)
+
+        close_btn = QPushButton('Done')
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+
+    def _copy(self, text):
+        from PyQt5.QtWidgets import QApplication
+        QApplication.clipboard().setText(text or '')
+        QMessageBox.information(self, 'Copied', 'Address copied to clipboard!')

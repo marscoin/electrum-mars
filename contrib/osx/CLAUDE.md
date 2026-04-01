@@ -7,6 +7,6 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #329 | 8:42 PM | ✅ | Bundled native library dependencies for macOS distribution | ~359 |
-| #326 | 8:41 PM | 🟣 | Completed Marscoin UI branding replacing all Litecoin references and assets | ~513 |
+| #359 | 9:03 PM | 🔴 | macOS build OpenSSL conflict resolution | ~305 |
+| #338 | 8:49 PM | 🔴 | Fixed PyInstaller OpenSSL conflict by forcing single Homebrew OpenSSL version in bundle | ~467 |
 </claude-mem-context>

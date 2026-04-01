@@ -7,6 +7,6 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #329 | 8:42 PM | ✅ | Bundled native library dependencies for macOS distribution | ~359 |
-| #326 | 8:41 PM | 🟣 | Completed Marscoin UI branding replacing all Litecoin references and assets | ~513 |
+| #369 | 10:03 PM | 🔴 | Fixed Windows CI build by adding CMake-based libsecp256k1 compilation | ~374 |
+| #368 | 9:59 PM | ✅ | GitHub Actions multi-platform release build pipeline | ~315 |
 </claude-mem-context>

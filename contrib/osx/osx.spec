@@ -31,6 +31,12 @@ hiddenimports += ['electrum_mars.plugins.jade.jade']
 hiddenimports += ['electrum_mars.plugins.jade.jadepy.jade']
 hiddenimports += ['_scrypt', 'PyQt5.QtPrintSupport']  # needed by Revealer
 hiddenimports += collect_submodules('bitstring')
+hiddenimports += ['electrum_mars.plugins.atomic_swap']
+hiddenimports += ['electrum_mars.plugins.atomic_swap.qt']
+hiddenimports += ['electrum_mars.plugins.atomic_swap.swap_engine']
+hiddenimports += ['electrum_mars.plugins.atomic_swap.orderbook']
+hiddenimports += ['electrum_mars.atomic_swap_htlc']
+hiddenimports += ['electrum_mars.btc_monitor']
 
 datas = [
     (electrum + PYPKG + '/*.json', PYPKG),
