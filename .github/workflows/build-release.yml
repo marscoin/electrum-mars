@@ -110,58 +110,51 @@ jobs:
           name: linux-appimage
           path: dist/Electrum-Mars-*-x86_64.AppImage
 
-  # ─── Windows (portable zip via Wine) ──────────────────────────────
+  # ─── Windows (native build on Windows runner) ─────────────────────
   windows:
-    runs-on: ubuntu-22.04
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install Wine and tools
-        run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y wine64 wine32 p7zip-full wget xvfb
-          # Initialize Wine prefix
-          export WINEDEBUG=-all
-          wineboot --init 2>/dev/null || true
-          sleep 3
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Set up Python for Wine
+      - name: Install Python dependencies
         run: |
-          export WINEDEBUG=-all
-          wget -q "https://www.python.org/ftp/python/3.9.13/python-3.9.13-amd64.exe" -O python-installer.exe
-          xvfb-run wine python-installer.exe /quiet InstallAllUsers=0 PrependPath=1 Include_test=0
-          sleep 10
-
-      - name: Install Python packages in Wine
-        run: |
-          export WINEDEBUG=-all
-          WINE_PY="wine $HOME/.wine/drive_c/users/$USER/AppData/Local/Programs/Python/Python39/python.exe"
-          $WINE_PY -m pip install --upgrade pip setuptools wheel
-          $WINE_PY -m pip install pyinstaller PyQt5 cryptography pyaes \
-            aiohttp aiohttp-socks 'aiorpcx>=0.22,<0.23' dnspython \
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install pyinstaller PyQt5 cryptography pyaes `
+            aiohttp aiohttp-socks 'aiorpcx>=0.22,<0.26' dnspython `
             'protobuf>=3.12,<4' certifi qrcode attrs bitstring qdarkstyle
+
+      - name: Create locale directory
+        run: mkdir -p electrum_mars/locale
+        shell: bash
 
       - name: Build Windows binary
         run: |
-          export WINEDEBUG=-all
-          WINE_PY="wine $HOME/.wine/drive_c/users/$USER/AppData/Local/Programs/Python/Python39/python.exe"
-          mkdir -p electrum_mars/locale
-          $WINE_PY -m PyInstaller --noconfirm --clean \
-            --name electrum-mars \
-            --add-data "electrum_mars\\*.json;electrum_mars" \
-            --add-data "electrum_mars\\wordlist;electrum_mars\\wordlist" \
-            --add-data "electrum_mars\\locale;electrum_mars\\locale" \
-            --add-data "electrum_mars\\plugins;electrum_mars\\plugins" \
-            --add-data "electrum_mars\\gui\\icons;electrum_mars\\gui\\icons" \
-            --add-data "electrum_mars\\lnwire;electrum_mars\\lnwire" \
-            --icon electrum_mars/gui/icons/marscoin.ico \
-            --collect-submodules bitstring \
-            --collect-submodules pkg_resources \
+          $env:ELECTRUM_VERSION = "${{ env.ELECTRUM_VERSION }}"
+          pyinstaller --noconfirm --clean `
+            --name electrum-mars `
+            --add-data "electrum_mars/*.json;electrum_mars" `
+            --add-data "electrum_mars/wordlist;electrum_mars/wordlist" `
+            --add-data "electrum_mars/locale;electrum_mars/locale" `
+            --add-data "electrum_mars/plugins;electrum_mars/plugins" `
+            --add-data "electrum_mars/gui/icons;electrum_mars/gui/icons" `
+            --add-data "electrum_mars/lnwire;electrum_mars/lnwire" `
+            --icon electrum_mars/gui/icons/marscoin.ico `
+            --hidden-import electrum_mars `
+            --hidden-import electrum_mars.plugins.jade.jade `
+            --hidden-import electrum_mars.plugins.jade.jadepy.jade `
+            --collect-submodules bitstring `
+            --collect-submodules pkg_resources `
             run_electrum
-          cd dist && 7z a ../Electrum-Mars-${{ env.ELECTRUM_VERSION }}-portable-win64.zip electrum-mars/ && cd ..
+
+      - name: Create portable zip
+        run: Compress-Archive -Path dist/electrum-mars -DestinationPath "Electrum-Mars-${{ env.ELECTRUM_VERSION }}-portable-win64.zip"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
