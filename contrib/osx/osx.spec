@@ -30,6 +30,7 @@ hiddenimports += collect_submodules('bitbox02')
 hiddenimports += ['electrum_mars.plugins.jade.jade']
 hiddenimports += ['electrum_mars.plugins.jade.jadepy.jade']
 hiddenimports += ['_scrypt', 'PyQt5.QtPrintSupport']  # needed by Revealer
+hiddenimports += collect_submodules('bitstring')
 
 datas = [
     (electrum + PYPKG + '/*.json', PYPKG),
@@ -87,6 +88,20 @@ for d in a.datas:
         a.datas.remove(d)
         break
 
+# Fix conflicting scrypt-bundled OpenSSL that clashes with Python's _ssl module.
+# Remove ALL OpenSSL libs that PyInstaller found (scrypt bundles a conflicting copy),
+# then add brew's OpenSSL explicitly. Scrypt will use brew's version at runtime.
+import subprocess
+brew_prefix = subprocess.check_output(['brew', '--prefix', 'openssl']).decode().strip()
+for x in a.binaries.copy():
+    if 'libcrypto' in x[0] or 'libssl' in x[0]:
+        a.binaries.remove(x)
+        print('----> Removed:', x[0])
+# Add brew's OpenSSL
+a.binaries.append(('libcrypto.3.dylib', brew_prefix + '/lib/libcrypto.3.dylib', 'BINARY'))
+a.binaries.append(('libssl.3.dylib', brew_prefix + '/lib/libssl.3.dylib', 'BINARY'))
+print('----> Added brew OpenSSL from', brew_prefix)
+
 # Strip out parts of Qt that we never use. Reduces binary size by tens of MBs. see #4815
 qt_bins2remove=('qtweb', 'qt3d', 'qtgame', 'qtdesigner', 'qtquick', 'qtlocation', 'qttest', 'qtxml')
 print("Removing Qt binaries:", *qt_bins2remove)
@@ -108,7 +123,7 @@ exe = EXE(
     upx=True,
     icon=electrum+ICONS_FILE,
     console=False,
-    target_arch='x86_64',  # TODO investigate building 'universal2'
+    target_arch='arm64',
 )
 
 app = BUNDLE(
@@ -125,8 +140,8 @@ app = BUNDLE(
         'NSSupportsAutomaticGraphicsSwitching': 'True',
         'CFBundleURLTypes':
             [{
-                'CFBundleURLName': 'litecoin',
-                'CFBundleURLSchemes': ['litecoin', ],
+                'CFBundleURLName': 'marscoin',
+                'CFBundleURLSchemes': ['marscoin', ],
             }],
         'LSMinimumSystemVersion': '10.13.0',
         'NSCameraUsageDescription': 'Electrum would like to access the camera to scan for QR codes',

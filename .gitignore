@@ -56,3 +56,4 @@ electrum_ltc/*.dylib
 contrib/osx/*.dylib
 venv
 electrum_mars/libsecp256k1.0.dylib
+electrum_mars/lib*.dylib
