@@ -1,0 +1,334 @@
+name: Build Release Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version string (e.g. 4.3.2.0-mars)'
+        required: true
+        default: '4.3.2.0-mars'
+
+env:
+  PYTHON_VERSION: '3.11'
+  ELECTRUM_VERSION: ${{ github.event.inputs.version || github.ref_name }}
+
+jobs:
+
+  # ─── Linux AppImage ───────────────────────────────────────────────
+  linux-appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-pip python3-venv python3-dev \
+            libsecp256k1-dev libsecp256k1-0 \
+            libzbar0 libzbar-dev \
+            libusb-1.0-0 libusb-1.0-0-dev \
+            libudev-dev libxkbcommon-x11-0 \
+            libxcb-xinerama0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 \
+            libxcb-shape0 libxcb-render-util0 libxcb-randr0 \
+            libgl1-mesa-dev \
+            squashfs-tools zsync desktop-file-utils \
+            autoconf automake libtool pkg-config gettext
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install pyinstaller
+          python3 -m pip install PyQt5 scrypt cryptography pyaes aiohttp aiohttp-socks \
+            'aiorpcx>=0.22,<0.26' dnspython protobuf certifi qrcode attrs bitstring qdarkstyle
+
+      - name: Build libsecp256k1
+        run: |
+          cp /usr/lib/x86_64-linux-gnu/libsecp256k1.so.0 electrum_mars/libsecp256k1.so.0 || \
+          cp /usr/lib/x86_64-linux-gnu/libsecp256k1.so electrum_mars/libsecp256k1.so.0
+
+      - name: Copy system libraries
+        run: |
+          cp /usr/lib/x86_64-linux-gnu/libzbar.so.0 electrum_mars/ || true
+          cp /usr/lib/x86_64-linux-gnu/libusb-1.0.so.0 electrum_mars/ || true
+
+      - name: Create locale directory
+        run: mkdir -p electrum_mars/locale
+
+      - name: Build with PyInstaller
+        run: |
+          ELECTRUM_VERSION="${{ env.ELECTRUM_VERSION }}" \
+          pyinstaller --noconfirm --clean \
+            --name electrum-mars \
+            --add-data "electrum_mars/*.json:electrum_mars" \
+            --add-data "electrum_mars/wordlist:electrum_mars/wordlist" \
+            --add-data "electrum_mars/locale:electrum_mars/locale" \
+            --add-data "electrum_mars/plugins:electrum_mars/plugins" \
+            --add-data "electrum_mars/gui/icons:electrum_mars/gui/icons" \
+            --add-data "electrum_mars/lnwire:electrum_mars/lnwire" \
+            --add-binary "electrum_mars/libsecp256k1.so.0:." \
+            --hidden-import electrum_mars \
+            --hidden-import electrum_mars.plugins.jade.jade \
+            --hidden-import electrum_mars.plugins.jade.jadepy.jade \
+            --collect-submodules bitstring \
+            --collect-submodules pkg_resources \
+            run_electrum
+
+      - name: Download AppImage tool
+        run: |
+          wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -O appimagetool
+          chmod +x appimagetool
+
+      - name: Create AppImage
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/128x128/apps
+          cp -r dist/electrum-mars/* AppDir/usr/bin/
+          cp electrum_mars/gui/icons/electrum-mars.png AppDir/usr/share/icons/hicolor/128x128/apps/
+          cp electrum_mars/gui/icons/electrum-mars.png AppDir/electrum-mars.png
+          cat > AppDir/usr/share/applications/electrum-mars.desktop << 'DESKTOP'
+          [Desktop Entry]
+          Name=Electrum-Mars
+          Exec=electrum-mars
+          Icon=electrum-mars
+          Type=Application
+          Categories=Finance;
+          DESKTOP
+          cp AppDir/usr/share/applications/electrum-mars.desktop AppDir/
+          ln -sf usr/bin/electrum-mars AppDir/AppRun
+          ARCH=x86_64 ./appimagetool AppDir dist/Electrum-Mars-${{ env.ELECTRUM_VERSION }}-x86_64.AppImage
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: dist/Electrum-Mars-*-x86_64.AppImage
+
+  # ─── Windows (cross-compile via Wine) ─────────────────────────────
+  windows:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Wine and dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo mkdir -pm755 /etc/apt/keyrings
+          sudo wget -O /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
+          sudo wget -NP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/ubuntu/dists/jammy/winehq-jammy.sources
+          sudo apt-get update
+          sudo apt-get install -y --install-recommends winehq-stable || \
+          sudo apt-get install -y wine64 wine32
+          sudo apt-get install -y nsis p7zip-full wget
+
+      - name: Set up Python for Wine
+        run: |
+          export WINEPREFIX="$HOME/.wine"
+          export WINEDEBUG=-all
+          # Download Python 3.9 for Windows
+          wget -q "https://www.python.org/ftp/python/3.9.13/python-3.9.13-amd64.exe" -O python-installer.exe
+          # Install Python silently
+          wine python-installer.exe /quiet InstallAllUsers=0 PrependPath=1 Include_test=0 2>/dev/null || true
+          sleep 5
+
+      - name: Install Python packages in Wine
+        run: |
+          export WINEPREFIX="$HOME/.wine"
+          export WINEDEBUG=-all
+          WINE_PYTHON="wine $HOME/.wine/drive_c/users/$USER/AppData/Local/Programs/Python/Python39/python.exe"
+          $WINE_PYTHON -m pip install --upgrade pip setuptools wheel 2>/dev/null
+          $WINE_PYTHON -m pip install pyinstaller PyQt5 scrypt cryptography pyaes \
+            aiohttp aiohttp-socks 'aiorpcx>=0.22,<0.23' dnspython \
+            'protobuf>=3.12,<4' certifi qrcode attrs bitstring qdarkstyle 2>/dev/null
+
+      - name: Build Windows binary
+        run: |
+          export WINEPREFIX="$HOME/.wine"
+          export WINEDEBUG=-all
+          WINE_PYTHON="wine $HOME/.wine/drive_c/users/$USER/AppData/Local/Programs/Python/Python39/python.exe"
+          mkdir -p electrum_mars/locale
+          $WINE_PYTHON -m PyInstaller --noconfirm --clean \
+            --name electrum-mars \
+            --add-data "electrum_mars/*.json;electrum_mars" \
+            --add-data "electrum_mars/wordlist;electrum_mars/wordlist" \
+            --add-data "electrum_mars/locale;electrum_mars/locale" \
+            --add-data "electrum_mars/plugins;electrum_mars/plugins" \
+            --add-data "electrum_mars/gui/icons;electrum_mars/gui/icons" \
+            --add-data "electrum_mars/lnwire;electrum_mars/lnwire" \
+            --icon electrum_mars/gui/icons/marscoin.ico \
+            --collect-submodules bitstring \
+            --collect-submodules pkg_resources \
+            run_electrum 2>/dev/null
+          # Create zip of the portable version
+          cd dist && 7z a ../Electrum-Mars-${{ env.ELECTRUM_VERSION }}-portable-win64.zip electrum-mars/ && cd ..
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable
+          path: Electrum-Mars-*-portable-win64.zip
+
+  # ─── macOS ────────────────────────────────────────────────────────
+  macos:
+    runs-on: macos-13  # Intel for broader compatibility
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install brew dependencies
+        run: |
+          brew install libsecp256k1 zbar libusb openssl@3 automake libtool pkg-config
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install pyinstaller PyQt5 scrypt cryptography pyaes \
+            aiohttp aiohttp-socks 'aiorpcx>=0.22,<0.26' dnspython \
+            'protobuf>=3.12,<4' certifi qrcode attrs bitstring qdarkstyle
+
+      - name: Copy native libraries
+        run: |
+          cp $(brew --prefix libsecp256k1)/lib/libsecp256k1.dylib electrum_mars/libsecp256k1.0.dylib
+          cp $(brew --prefix zbar)/lib/libzbar.dylib electrum_mars/libzbar.0.dylib
+          cp $(brew --prefix libusb)/lib/libusb-1.0.dylib electrum_mars/libusb-1.0.dylib
+
+      - name: Create locale directory
+        run: mkdir -p electrum_mars/locale
+
+      - name: Build macOS app
+        run: |
+          ELECTRUM_VERSION="${{ env.ELECTRUM_VERSION }}" \
+          pyinstaller --noconfirm --clean contrib/osx/osx.spec
+
+      - name: Fix OpenSSL in bundle
+        run: |
+          # Replace broken scrypt OpenSSL symlinks with brew's OpenSSL
+          BREW_SSL="$(brew --prefix openssl@3)/lib"
+          rm -f dist/Electrum-Mars.app/Contents/Frameworks/libcrypto.3.dylib
+          rm -f dist/Electrum-Mars.app/Contents/Frameworks/libssl.3.dylib
+          cp "$BREW_SSL/libcrypto.3.dylib" dist/Electrum-Mars.app/Contents/Frameworks/
+          cp "$BREW_SSL/libssl.3.dylib" dist/Electrum-Mars.app/Contents/Frameworks/
+          codesign -s - -f dist/Electrum-Mars.app/Contents/Frameworks/libcrypto.3.dylib
+          codesign -s - -f dist/Electrum-Mars.app/Contents/Frameworks/libssl.3.dylib
+          codesign -s - -f --deep dist/Electrum-Mars.app
+
+      - name: Create DMG
+        run: |
+          hdiutil create -fs HFS+ -volname "Electrum-Mars" \
+            -srcfolder dist/Electrum-Mars.app \
+            dist/Electrum-Mars-${{ env.ELECTRUM_VERSION }}-macos-x86_64.dmg
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/Electrum-Mars-*-macos-x86_64.dmg
+
+  # ─── macOS ARM64 ──────────────────────────────────────────────────
+  macos-arm64:
+    runs-on: macos-14  # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install brew dependencies
+        run: |
+          brew install libsecp256k1 zbar libusb openssl@3 automake libtool pkg-config
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install pyinstaller PyQt5 scrypt cryptography pyaes \
+            aiohttp aiohttp-socks 'aiorpcx>=0.22,<0.26' dnspython \
+            'protobuf>=3.12,<4' certifi qrcode attrs bitstring qdarkstyle
+
+      - name: Copy native libraries
+        run: |
+          cp $(brew --prefix libsecp256k1)/lib/libsecp256k1.dylib electrum_mars/libsecp256k1.0.dylib
+          cp $(brew --prefix zbar)/lib/libzbar.dylib electrum_mars/libzbar.0.dylib
+          cp $(brew --prefix libusb)/lib/libusb-1.0.dylib electrum_mars/libusb-1.0.dylib
+
+      - name: Create locale directory
+        run: mkdir -p electrum_mars/locale
+
+      - name: Update spec for ARM64
+        run: |
+          sed -i '' "s/target_arch='x86_64'/target_arch='arm64'/" contrib/osx/osx.spec || \
+          sed -i "s/target_arch='x86_64'/target_arch='arm64'/" contrib/osx/osx.spec || true
+
+      - name: Build macOS app
+        run: |
+          ELECTRUM_VERSION="${{ env.ELECTRUM_VERSION }}" \
+          pyinstaller --noconfirm --clean contrib/osx/osx.spec
+
+      - name: Fix OpenSSL in bundle
+        run: |
+          BREW_SSL="$(brew --prefix openssl@3)/lib"
+          rm -f dist/Electrum-Mars.app/Contents/Frameworks/libcrypto.3.dylib
+          rm -f dist/Electrum-Mars.app/Contents/Frameworks/libssl.3.dylib
+          cp "$BREW_SSL/libcrypto.3.dylib" dist/Electrum-Mars.app/Contents/Frameworks/
+          cp "$BREW_SSL/libssl.3.dylib" dist/Electrum-Mars.app/Contents/Frameworks/
+          codesign -s - -f dist/Electrum-Mars.app/Contents/Frameworks/libcrypto.3.dylib
+          codesign -s - -f dist/Electrum-Mars.app/Contents/Frameworks/libssl.3.dylib
+          codesign -s - -f --deep dist/Electrum-Mars.app
+
+      - name: Create DMG
+        run: |
+          hdiutil create -fs HFS+ -volname "Electrum-Mars" \
+            -srcfolder dist/Electrum-Mars.app \
+            dist/Electrum-Mars-${{ env.ELECTRUM_VERSION }}-macos-arm64.dmg
+
+      - name: Upload macOS ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-dmg
+          path: dist/Electrum-Mars-*-macos-arm64.dmg
+
+  # ─── Create Release ──────────────────────────────────────────────
+  release:
+    needs: [linux-appimage, windows, macos, macos-arm64]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.AppImage
+            artifacts/**/*.zip
+            artifacts/**/*.dmg
