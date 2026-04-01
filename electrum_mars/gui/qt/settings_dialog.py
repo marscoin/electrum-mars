@@ -111,7 +111,7 @@ class SettingsDialog(QDialog, QtEventListener):
             self.config.set_key('bolt11_fallback', bool(x))
         bolt11_fallback_cb.stateChanged.connect(on_bolt11_fallback)
 
-        bip21_lightning_cb = QCheckBox(_('Add lightning invoice to litecoin URIs'))
+        bip21_lightning_cb = QCheckBox(_('Add lightning invoice to marscoin URIs'))
         bip21_lightning_cb.setChecked(bool(self.config.get('bip21_lightning', False)))
         bip21_lightning_cb.setToolTip(_('This may create larger qr codes.'))
         def on_bip21_lightning(x):
@@ -222,7 +222,7 @@ class SettingsDialog(QDialog, QtEventListener):
         # units
         units = base_units_list
         msg = (_('Base unit of your wallet.')
-               + '\n1 LTC = 1000 mLTC. 1 mLTC = 1000 uLTC. 1 uLTC = 100 sat.\n'
+               + '\n1 MARS = 1000 mMARS. 1 mMARS = 1000 uMARS. 1 uMARS = 100 sat.\n'
                + _('This setting affects the Send tab, and all balance related fields.'))
         unit_label = HelpLabel(_('Base unit') + ':', msg)
         unit_combo = QComboBox()
@@ -239,7 +239,7 @@ class SettingsDialog(QDialog, QtEventListener):
             self.app.refresh_amount_edits_signal.emit()
         unit_combo.currentIndexChanged.connect(lambda x: on_unit(x, nz))
 
-        thousandsep_cb = QCheckBox(_("Add thousand separators to litecoin amounts"))
+        thousandsep_cb = QCheckBox(_("Add thousand separators to marscoin amounts"))
         thousandsep_cb.setChecked(bool(self.config.get('amt_add_thousands_sep', False)))
         def on_set_thousandsep(v):
             checked = v == Qt.Checked

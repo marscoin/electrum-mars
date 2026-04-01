@@ -419,7 +419,7 @@ class QEWallet(AuthMixin, QObject, QtEventListener):
         self._logger.info('send_onchain: %s %d' % (address,amount))
         coins = self.wallet.get_spendable_coins(None)
         if not bitcoin.is_address(address):
-            self._logger.warning('Invalid Litecoin Address: ' + address)
+            self._logger.warning('Invalid Marscoin Address: ' + address)
             return False
 
         outputs = [PartialTxOutput.from_address_and_value(address, amount)]

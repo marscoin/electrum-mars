@@ -54,8 +54,8 @@ if TYPE_CHECKING:
 _logger = get_logger(__name__)
 
 
-REQUEST_HEADERS = {'Accept': 'application/litecoin-paymentrequest', 'User-Agent': 'Electrum'}
-ACK_HEADERS = {'Content-Type':'application/litecoin-payment','Accept':'application/litecoin-paymentack','User-Agent':'Electrum'}
+REQUEST_HEADERS = {'Accept': 'application/marscoin-paymentrequest', 'User-Agent': 'Electrum'}
+ACK_HEADERS = {'Content-Type':'application/marscoin-payment','Accept':'application/marscoin-paymentack','User-Agent':'Electrum'}
 
 ca_path = certifi.where()
 ca_list = None
@@ -82,7 +82,7 @@ async def get_payment_request(url: str) -> 'PaymentRequest':
                     response.raise_for_status()
                     # Guard against `bitcoin:`-URIs with invalid payment request URLs
                     if "Content-Type" not in response.headers \
-                    or response.headers["Content-Type"] != "application/litecoin-paymentrequest":
+                    or response.headers["Content-Type"] != "application/marscoin-paymentrequest":
                         data = None
                         error = "payment URL not pointing to a payment request handling server"
                     else:

@@ -2,7 +2,7 @@ import QtQuick 2.12
 import QtQuick.Controls 2.0
 import QtMultimedia 5.6
 
-import org.electrum_ltc 1.0
+import org.electrum_mars 1.0
 
 Item {
     id: scanner

@@ -428,7 +428,7 @@ class TestBlockchain(ElectrumTestCase):
 
 class TestVerifyHeader(ElectrumTestCase):
 
-    # Data for Litecoin block header #100.
+    # Data for Marscoin block header #100.
     valid_header = "01000000fb040b4b30f4f0d90b5d4819f566a156669565f73998fb37cf072c4ec5daac08fd5a56f1650756fec9f1a587f9f69e5298723bf4e296aff71670b7d471f1a31e9e55964ef0ff0f1e27010000"
     target = Blockchain.bits_to_target(0x1e0ffff0)
     prev_hash = "08acdac54e2c07cf37fb9839f765956656a166f519485d0bd9f0f4304b0b04fb"

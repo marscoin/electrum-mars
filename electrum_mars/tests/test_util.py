@@ -105,7 +105,7 @@ class TestUtil(ElectrumTestCase):
         self.assertEqual(expected, result)
 
     def test_parse_URI_address(self):
-        self._do_test_parse_URI('litecoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv',
+        self._do_test_parse_URI('marscoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv',
                                 {'address': 'LectrumELqJWMECz7W2iarBpT4VvAPqwAv'})
 
     def test_parse_URI_only_address(self):
@@ -114,70 +114,70 @@ class TestUtil(ElectrumTestCase):
 
 
     def test_parse_URI_address_label(self):
-        self._do_test_parse_URI('litecoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?label=electrum%20test',
+        self._do_test_parse_URI('marscoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?label=electrum%20test',
                                 {'address': 'LectrumELqJWMECz7W2iarBpT4VvAPqwAv', 'label': 'electrum test'})
 
     def test_parse_URI_address_message(self):
-        self._do_test_parse_URI('litecoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?message=electrum%20test',
+        self._do_test_parse_URI('marscoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?message=electrum%20test',
                                 {'address': 'LectrumELqJWMECz7W2iarBpT4VvAPqwAv', 'message': 'electrum test', 'memo': 'electrum test'})
 
     def test_parse_URI_address_amount(self):
-        self._do_test_parse_URI('litecoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?amount=0.0003',
+        self._do_test_parse_URI('marscoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?amount=0.0003',
                                 {'address': 'LectrumELqJWMECz7W2iarBpT4VvAPqwAv', 'amount': 30000})
 
     def test_parse_URI_address_request_url(self):
-        self._do_test_parse_URI('litecoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?r=http://domain.tld/page?h%3D2a8628fc2fbe',
+        self._do_test_parse_URI('marscoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?r=http://domain.tld/page?h%3D2a8628fc2fbe',
                                 {'address': 'LectrumELqJWMECz7W2iarBpT4VvAPqwAv', 'r': 'http://domain.tld/page?h=2a8628fc2fbe'})
 
     def test_parse_URI_ignore_args(self):
-        self._do_test_parse_URI('litecoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?test=test',
+        self._do_test_parse_URI('marscoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?test=test',
                                 {'address': 'LectrumELqJWMECz7W2iarBpT4VvAPqwAv', 'test': 'test'})
 
     def test_parse_URI_multiple_args(self):
-        self._do_test_parse_URI('litecoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?amount=0.00004&label=electrum-test&message=electrum%20test&test=none&r=http://domain.tld/page',
+        self._do_test_parse_URI('marscoin:LectrumELqJWMECz7W2iarBpT4VvAPqwAv?amount=0.00004&label=electrum-test&message=electrum%20test&test=none&r=http://domain.tld/page',
                                 {'address': 'LectrumELqJWMECz7W2iarBpT4VvAPqwAv', 'amount': 4000, 'label': 'electrum-test', 'message': u'electrum test', 'memo': u'electrum test', 'r': 'http://domain.tld/page', 'test': 'none'})
 
     def test_parse_URI_no_address_request_url(self):
-        self._do_test_parse_URI('litecoin:?r=http://domain.tld/page?h%3D2a8628fc2fbe',
+        self._do_test_parse_URI('marscoin:?r=http://domain.tld/page?h%3D2a8628fc2fbe',
                                 {'r': 'http://domain.tld/page?h=2a8628fc2fbe'})
 
     def test_parse_URI_invalid_address(self):
-        self.assertRaises(InvalidBitcoinURI, parse_URI, 'litecoin:invalidaddress')
+        self.assertRaises(InvalidBitcoinURI, parse_URI, 'marscoin:invalidaddress')
 
     def test_parse_URI_invalid(self):
-        self.assertRaises(InvalidBitcoinURI, parse_URI, 'notlitecoin:LPzGaoLUtXFkmNo3u1chDxGxDnSaBQTTxm')
+        self.assertRaises(InvalidBitcoinURI, parse_URI, 'notmarscoin:LPzGaoLUtXFkmNo3u1chDxGxDnSaBQTTxm')
 
     def test_parse_URI_parameter_pollution(self):
-        self.assertRaises(InvalidBitcoinURI, parse_URI, 'litecoin:LPzGaoLUtXFkmNo3u1chDxGxDnSaBQTTxm?amount=0.0003&label=test&amount=30.0')
+        self.assertRaises(InvalidBitcoinURI, parse_URI, 'marscoin:LPzGaoLUtXFkmNo3u1chDxGxDnSaBQTTxm?amount=0.0003&label=test&amount=30.0')
 
     @as_testnet
     def test_parse_URI_lightning_consistency(self):
         # bip21 uri that *only* includes a "lightning" key. LN part does not have fallback address
-        self._do_test_parse_URI('litecoin:?lightning=lntltc700u1p3kqy0cpp5azvqy3wez7hcz3ka7tpqqvw5mpsa7fknxl4ca7a7669kswhf0hgqsp5qxhxul9k88w2nsk643elzuu4nepwkq052ek79esmz47yj6lfrhuqdqvw3jhxapjxcmscqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqt5n3hanrkydrkl9h3tdp5wsqa6eypgtldr8dqgdtfgnxrjax6jr935yrjvfyh457dhyu267vezkkrc02xseh6euf4d64alpucyskqusqq4dwfg',
+        self._do_test_parse_URI('marscoin:?lightning=lntltc700u1p3kqy0cpp5azvqy3wez7hcz3ka7tpqqvw5mpsa7fknxl4ca7a7669kswhf0hgqsp5qxhxul9k88w2nsk643elzuu4nepwkq052ek79esmz47yj6lfrhuqdqvw3jhxapjxcmscqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqt5n3hanrkydrkl9h3tdp5wsqa6eypgtldr8dqgdtfgnxrjax6jr935yrjvfyh457dhyu267vezkkrc02xseh6euf4d64alpucyskqusqq4dwfg',
                                 {'lightning': 'lntltc700u1p3kqy0cpp5azvqy3wez7hcz3ka7tpqqvw5mpsa7fknxl4ca7a7669kswhf0hgqsp5qxhxul9k88w2nsk643elzuu4nepwkq052ek79esmz47yj6lfrhuqdqvw3jhxapjxcmscqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqt5n3hanrkydrkl9h3tdp5wsqa6eypgtldr8dqgdtfgnxrjax6jr935yrjvfyh457dhyu267vezkkrc02xseh6euf4d64alpucyskqusqq4dwfg'})
         # bip21 uri that *only* includes a "lightning" key. LN part has fallback address
-        self._do_test_parse_URI('litecoin:?lightning=lntltc700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdhkk8a597sn865rhap4h4jenjefdk7ssp5d9zjr96ezp89gsyenfse5f4jn9ls29p0awvp0zxlt6tpzn2m3j5qdqvw3jhxapjxcmqcqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqfppqu5ua3szskclyd48wlfdwfd32j65phxy905wk42pyx829xxywq93zuzfezr3vzwudcngdp3ruj3xxuamnf5v9v8hjlnzw4ys9ya0gypddvj9ztqf9jcmeq9dfte4ez2slrkjqysgppyppx9',
+        self._do_test_parse_URI('marscoin:?lightning=lntltc700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdhkk8a597sn865rhap4h4jenjefdk7ssp5d9zjr96ezp89gsyenfse5f4jn9ls29p0awvp0zxlt6tpzn2m3j5qdqvw3jhxapjxcmqcqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqfppqu5ua3szskclyd48wlfdwfd32j65phxy905wk42pyx829xxywq93zuzfezr3vzwudcngdp3ruj3xxuamnf5v9v8hjlnzw4ys9ya0gypddvj9ztqf9jcmeq9dfte4ez2slrkjqysgppyppx9',
                                 {'lightning': 'lntltc700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdhkk8a597sn865rhap4h4jenjefdk7ssp5d9zjr96ezp89gsyenfse5f4jn9ls29p0awvp0zxlt6tpzn2m3j5qdqvw3jhxapjxcmqcqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqfppqu5ua3szskclyd48wlfdwfd32j65phxy905wk42pyx829xxywq93zuzfezr3vzwudcngdp3ruj3xxuamnf5v9v8hjlnzw4ys9ya0gypddvj9ztqf9jcmeq9dfte4ez2slrkjqysgppyppx9'})
         # bip21 uri that includes "lightning" key. LN part does not have fallback address
-        self._do_test_parse_URI('litecoin:tltc1qu5ua3szskclyd48wlfdwfd32j65phxy9apu6mk?amount=0.0007&message=test266&lightning=lntltc700u1p3kqy0cpp5azvqy3wez7hcz3ka7tpqqvw5mpsa7fknxl4ca7a7669kswhf0hgqsp5qxhxul9k88w2nsk643elzuu4nepwkq052ek79esmz47yj6lfrhuqdqvw3jhxapjxcmscqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqt5n3hanrkydrkl9h3tdp5wsqa6eypgtldr8dqgdtfgnxrjax6jr935yrjvfyh457dhyu267vezkkrc02xseh6euf4d64alpucyskqusqq4dwfg',
+        self._do_test_parse_URI('marscoin:tltc1qu5ua3szskclyd48wlfdwfd32j65phxy9apu6mk?amount=0.0007&message=test266&lightning=lntltc700u1p3kqy0cpp5azvqy3wez7hcz3ka7tpqqvw5mpsa7fknxl4ca7a7669kswhf0hgqsp5qxhxul9k88w2nsk643elzuu4nepwkq052ek79esmz47yj6lfrhuqdqvw3jhxapjxcmscqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqt5n3hanrkydrkl9h3tdp5wsqa6eypgtldr8dqgdtfgnxrjax6jr935yrjvfyh457dhyu267vezkkrc02xseh6euf4d64alpucyskqusqq4dwfg',
                                 {'address': 'tltc1qu5ua3szskclyd48wlfdwfd32j65phxy9apu6mk',
                                  'amount': 70000,
                                  'lightning': 'lntltc700u1p3kqy0cpp5azvqy3wez7hcz3ka7tpqqvw5mpsa7fknxl4ca7a7669kswhf0hgqsp5qxhxul9k88w2nsk643elzuu4nepwkq052ek79esmz47yj6lfrhuqdqvw3jhxapjxcmscqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqt5n3hanrkydrkl9h3tdp5wsqa6eypgtldr8dqgdtfgnxrjax6jr935yrjvfyh457dhyu267vezkkrc02xseh6euf4d64alpucyskqusqq4dwfg',
                                  'memo': 'test266',
                                  'message': 'test266'})
         # bip21 uri that includes "lightning" key. LN part has fallback address
-        self._do_test_parse_URI('litecoin:tltc1qu5ua3szskclyd48wlfdwfd32j65phxy9apu6mk?amount=0.0007&message=test266&lightning=lntltc700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdhkk8a597sn865rhap4h4jenjefdk7ssp5d9zjr96ezp89gsyenfse5f4jn9ls29p0awvp0zxlt6tpzn2m3j5qdqvw3jhxapjxcmqcqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqfppqu5ua3szskclyd48wlfdwfd32j65phxy905wk42pyx829xxywq93zuzfezr3vzwudcngdp3ruj3xxuamnf5v9v8hjlnzw4ys9ya0gypddvj9ztqf9jcmeq9dfte4ez2slrkjqysgppyppx9',
+        self._do_test_parse_URI('marscoin:tltc1qu5ua3szskclyd48wlfdwfd32j65phxy9apu6mk?amount=0.0007&message=test266&lightning=lntltc700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdhkk8a597sn865rhap4h4jenjefdk7ssp5d9zjr96ezp89gsyenfse5f4jn9ls29p0awvp0zxlt6tpzn2m3j5qdqvw3jhxapjxcmqcqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqfppqu5ua3szskclyd48wlfdwfd32j65phxy905wk42pyx829xxywq93zuzfezr3vzwudcngdp3ruj3xxuamnf5v9v8hjlnzw4ys9ya0gypddvj9ztqf9jcmeq9dfte4ez2slrkjqysgppyppx9',
                                 {'address': 'tltc1qu5ua3szskclyd48wlfdwfd32j65phxy9apu6mk',
                                  'amount': 70000,
                                  'lightning': 'lntltc700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdhkk8a597sn865rhap4h4jenjefdk7ssp5d9zjr96ezp89gsyenfse5f4jn9ls29p0awvp0zxlt6tpzn2m3j5qdqvw3jhxapjxcmqcqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqfppqu5ua3szskclyd48wlfdwfd32j65phxy905wk42pyx829xxywq93zuzfezr3vzwudcngdp3ruj3xxuamnf5v9v8hjlnzw4ys9ya0gypddvj9ztqf9jcmeq9dfte4ez2slrkjqysgppyppx9',
                                  'memo': 'test266',
                                  'message': 'test266'})
         # bip21 uri that includes "lightning" key. LN part has fallback address BUT it mismatches the top-level address
-        self.assertRaises(InvalidBitcoinURI, parse_URI, 'litecoin:tltc1qvu0c9xme0ul3gzx4nzqdgxsu25acuk9w4cs5zr?amount=0.0007&message=test266&lightning=lntltc700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdhkk8a597sn865rhap4h4jenjefdk7ssp5d9zjr96ezp89gsyenfse5f4jn9ls29p0awvp0zxlt6tpzn2m3j5qdqvw3jhxapjxcmqcqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqfppqu5ua3szskclyd48wlfdwfd32j65phxy905wk42pyx829xxywq93zuzfezr3vzwudcngdp3ruj3xxuamnf5v9v8hjlnzw4ys9ya0gypddvj9ztqf9jcmeq9dfte4ez2slrkjqysgppyppx9')
+        self.assertRaises(InvalidBitcoinURI, parse_URI, 'marscoin:tltc1qvu0c9xme0ul3gzx4nzqdgxsu25acuk9w4cs5zr?amount=0.0007&message=test266&lightning=lntltc700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdhkk8a597sn865rhap4h4jenjefdk7ssp5d9zjr96ezp89gsyenfse5f4jn9ls29p0awvp0zxlt6tpzn2m3j5qdqvw3jhxapjxcmqcqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqfppqu5ua3szskclyd48wlfdwfd32j65phxy905wk42pyx829xxywq93zuzfezr3vzwudcngdp3ruj3xxuamnf5v9v8hjlnzw4ys9ya0gypddvj9ztqf9jcmeq9dfte4ez2slrkjqysgppyppx9')
         # bip21 uri that includes "lightning" key. top-level amount mismatches LN amount
-        self.assertRaises(InvalidBitcoinURI, parse_URI, 'litecoin:tltc1qu5ua3szskclyd48wlfdwfd32j65phxy9apu6mk?amount=0.0008&message=test266&lightning=lntltc700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdhkk8a597sn865rhap4h4jenjefdk7ssp5d9zjr96ezp89gsyenfse5f4jn9ls29p0awvp0zxlt6tpzn2m3j5qdqvw3jhxapjxcmqcqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqfppqu5ua3szskclyd48wlfdwfd32j65phxy905wk42pyx829xxywq93zuzfezr3vzwudcngdp3ruj3xxuamnf5v9v8hjlnzw4ys9ya0gypddvj9ztqf9jcmeq9dfte4ez2slrkjqysgppyppx9')
+        self.assertRaises(InvalidBitcoinURI, parse_URI, 'marscoin:tltc1qu5ua3szskclyd48wlfdwfd32j65phxy9apu6mk?amount=0.0008&message=test266&lightning=lntltc700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdhkk8a597sn865rhap4h4jenjefdk7ssp5d9zjr96ezp89gsyenfse5f4jn9ls29p0awvp0zxlt6tpzn2m3j5qdqvw3jhxapjxcmqcqzynxq8zals8sq9q7sqqqqqqqqqqqqqqqqqqqqqqqqq9qsqfppqu5ua3szskclyd48wlfdwfd32j65phxy905wk42pyx829xxywq93zuzfezr3vzwudcngdp3ruj3xxuamnf5v9v8hjlnzw4ys9ya0gypddvj9ztqf9jcmeq9dfte4ez2slrkjqysgppyppx9')
         # bip21 uri that includes "lightning" key with garbage unparseable value
-        self.assertRaises(InvalidBitcoinURI, parse_URI, 'litecoin:tltc1qu5ua3szskclyd48wlfdwfd32j65phxy9apu6mk?amount=0.0008&message=test266&lightning=lntb700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdasdasdasdasd')
+        self.assertRaises(InvalidBitcoinURI, parse_URI, 'marscoin:tltc1qu5ua3szskclyd48wlfdwfd32j65phxy9apu6mk?amount=0.0008&message=test266&lightning=lntb700u1p3kqy26pp5l7rj7w0u5sdsj24umzdlhdasdasdasdasd')
 
     def test_is_hash256_str(self):
         self.assertTrue(is_hash256_str('09a4c03e3bdf83bbe3955f907ee52da4fc12f4813d459bc75228b64ad08617c7'))

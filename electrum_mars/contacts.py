@@ -94,7 +94,7 @@ class Contacts(dict, Logger):
                 'type': 'openalias',
                 'validated': validated
             }
-        raise Exception("Invalid Litecoin address or alias", k)
+        raise Exception("Invalid Marscoin address or alias", k)
 
     def fetch_openalias(self, config):
         self.alias_info = None

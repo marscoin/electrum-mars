@@ -28,7 +28,7 @@ Item {
             height: qrprops.icon_modules * qrprops.box_size
 
             Image {
-                source: '../../../icons/electrum-ltc.png'
+                source: '../../../icons/electrum-mars.png'
                 x: 1
                 y: 1
                 width: parent.width - 2

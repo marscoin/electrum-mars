@@ -1,20 +1,38 @@
-# Electrum-LTC - Lightweight Litecoin client
+# Electrum-Mars - Lightweight Marscoin Wallet
 
 ```
 Licence: MIT Licence
 Author: Thomas Voegtlin
-Port Maintainer: Pooler
+Port Maintainer: Pooler, Marscoin Dev Team
 Language: Python (>= 3.8)
-Homepage: https://electrum-ltc.org/
+Homepage: https://github.com/marscoin/electrum-mars
 ```
+
+Electrum-Mars is a lightweight Marscoin wallet, forked from
+[Electrum-LTC](https://github.com/pooler/electrum-ltc) (Litecoin) with
+Marscoin-specific consensus rules: DarkGravityWave v3, ASERT difficulty
+adjustment, and AuxPoW (merge mining) support.
+
+### Sync Performance
+
+Full sync from genesis to chain tip (~3.4M blocks) takes approximately
+**28 minutes** with the C scrypt library installed. The sync passes through
+four difficulty eras:
+
+| Era | Height Range | Algorithm |
+|-----|-------------|-----------|
+| V1 | 0 – 125,999 | MAX_TARGET |
+| DGW3 | 126,000 – 2,999,998 | DarkGravityWave v3 (24-block window) |
+| ASERT | 2,999,999+ | Exponential moving average (2h half-life) |
+| AuxPoW | 3,100,000+ | Merge mining (bits-only SPV verification) |
 
 
 ## Getting started
 
-_(If you've come here looking to simply run Electrum-LTC,
-[you may download it here](https://electrum-ltc.org/#download).)_
+_(If you've come here looking to simply run Electrum-Mars,
+check the [releases](https://github.com/marscoin/electrum-mars/releases) page.)_
 
-Electrum-LTC itself is pure Python, and so are most of the required dependencies,
+Electrum-Mars itself is pure Python, and so are most of the required dependencies,
 but not everything. The following sections describe how to run from source, but here
 is a TL;DR:
 
@@ -65,22 +83,22 @@ If you would like hardware wallet support,
 ### Running from tar.gz
 
 If you downloaded the official package (tar.gz), you can run
-Electrum-LTC from its root directory without installing it on your
+Electrum-Mars from its root directory without installing it on your
 system; all the pure python dependencies are included in the 'packages'
-directory. To run Electrum-LTC from its root directory, just do:
+directory. To run Electrum-Mars from its root directory, just do:
 ```
 $ ./run_electrum
 ```
 
-You can also install Electrum-LTC on your system, by running this command:
+You can also install Electrum-Mars on your system, by running this command:
 ```
 $ sudo apt-get install python3-setuptools python3-pip
 $ python3 -m pip install --user .
 ```
 
 This will download and install the Python dependencies used by
-Electrum-LTC instead of using the 'packages' directory.
-It will also place an executable named `electrum-ltc` in `~/.local/bin`,
+Electrum-Mars instead of using the 'packages' directory.
+It will also place an executable named `electrum-mars` in `~/.local/bin`,
 so make sure that is on your `PATH` variable.
 
 
@@ -91,8 +109,8 @@ and [for macOS](contrib/osx/README_macos.md))_
 
 Check out the code from GitHub:
 ```
-$ git clone https://github.com/pooler/electrum-ltc.git
-$ cd electrum-ltc
+$ git clone https://github.com/marscoin/electrum-mars.git
+$ cd electrum-mars
 $ git submodule update --init
 ```
 
@@ -101,13 +119,7 @@ Run install (this should install dependencies):
 $ python3 -m pip install --user -e .
 ```
 
-Create translations (optional):
-```
-$ sudo apt-get install python-requests gettext
-$ ./contrib/pull_locale
-```
-
-Finally, to start Electrum-LTC:
+Finally, to start Electrum-Mars:
 ```
 $ ./run_electrum
 ```
@@ -116,12 +128,12 @@ $ ./run_electrum
 
 Run unit tests with `pytest`:
 ```
-$ pytest electrum_ltc/tests -v
+$ pytest electrum_mars/tests -v
 ```
 
 To run a single file, specify it directly like this:
 ```
-$ pytest electrum_ltc/tests/test_bitcoin.py -v
+$ pytest electrum_mars/tests/test_bitcoin.py -v
 ```
 
 ## Creating Binaries
@@ -139,9 +151,6 @@ Any help testing the software, reporting or fixing bugs, reviewing pull requests
 and recent changes, writing tests, or helping with outstanding issues is very welcome.
 Implementing new features, or improving/refactoring the codebase, is of course
 also welcome, but to avoid wasted effort, especially for larger changes,
-we encourage discussing these on the issue tracker or IRC first.
+we encourage discussing these on the issue tracker first.
 
-Besides [GitHub](https://github.com/pooler/electrum-ltc),
-most communication about Electrum-LTC development happens on IRC, in the
-`#electrum-ltc` channel on Libera Chat. The easiest way to participate on IRC is
-with the web client, [web.libera.chat](https://web.libera.chat/#electrum-ltc).
+GitHub: https://github.com/marscoin/electrum-mars

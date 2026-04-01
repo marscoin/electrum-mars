@@ -227,7 +227,7 @@ class RequestDialog(Factory.Popup):
         Clock.schedule_once(lambda dt: self.app.show_info(msg))
 
     def do_share(self):
-        self.app.do_share(self.data, _("Share Litecoin Request"))
+        self.app.do_share(self.data, _("Share Marscoin Request"))
         self.dismiss()
 
     def delete_dialog(self):

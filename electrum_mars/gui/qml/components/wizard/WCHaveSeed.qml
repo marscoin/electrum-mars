@@ -3,7 +3,7 @@ import QtQuick.Layouts 1.0
 import QtQuick.Controls 2.1
 import QtQuick.Controls.Material 2.0
 
-import org.electrum_ltc 1.0
+import org.electrum_mars 1.0
 
 import ".."
 import "../controls"

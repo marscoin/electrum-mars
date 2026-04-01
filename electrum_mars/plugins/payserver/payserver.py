@@ -149,7 +149,7 @@ class PayServer(Logger, EventListener):
         if not request:
             return web.HTTPNotFound()
         pr = make_request(self.config, request)
-        return web.Response(body=pr.SerializeToString(), content_type='application/litecoin-paymentrequest')
+        return web.Response(body=pr.SerializeToString(), content_type='application/marscoin-paymentrequest')
 
     async def get_status(self, request):
         ws = web.WebSocketResponse()

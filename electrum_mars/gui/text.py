@@ -618,7 +618,7 @@ class ElectrumGui(BaseElectrumGui, EventListener):
                 pr=None,
                 URI=None)
         else:
-            self.show_message(_('Invalid Litecoin address'))
+            self.show_message(_('Invalid Marscoin address'))
             return
         return invoice
 

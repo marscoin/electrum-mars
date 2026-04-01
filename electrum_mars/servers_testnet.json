@@ -1,11 +1,11 @@
 {
-    "electrum-ltc.bysh.me": {
+    "electrum-mars.bysh.me": {
         "pruning": "-",
         "s": "51002",
         "t": "51001",
         "version": "1.4.2"
     },
-    "electrum.ltc.xurious.com": {
+    "electrum.mars.xurious.com": {
         "pruning": "-",
         "s": "51002",
         "t": "51001",

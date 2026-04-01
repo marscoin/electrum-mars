@@ -566,7 +566,7 @@ class QEUserEnteredPayment(QEInvoice):
             return
 
         if not bitcoin.is_address(self._recipient):
-            self.validationError.emit('recipient', _('Invalid Litecoin address'))
+            self.validationError.emit('recipient', _('Invalid Marscoin address'))
             return
 
         if self._amount.isEmpty:

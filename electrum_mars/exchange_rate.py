@@ -253,7 +253,7 @@ class Coinbase(ExchangeBase):
 class CoinCap(ExchangeBase):
 
     async def get_rates(self, ccy):
-        json = await self.get_json('api.coincap.io', '/v2/rates/litecoin/')
+        json = await self.get_json('api.coincap.io', '/v2/rates/marscoin/')
         return {'USD': to_decimal(json['data']['rateUsd'])}
 
     def history_ccys(self):
@@ -263,7 +263,7 @@ class CoinCap(ExchangeBase):
         # Currently 2000 days is the maximum in 1 API call
         # (and history starts on 2017-03-23)
         history = await self.get_json('api.coincap.io',
-                                      '/v2/assets/litecoin/history?interval=d1&limit=2000')
+                                      '/v2/assets/marscoin/history?interval=d1&limit=2000')
         return dict([(datetime.utcfromtimestamp(h['time']/1000).strftime('%Y-%m-%d'), str(h['priceUsd']))
                      for h in history['data']])
 
@@ -271,7 +271,7 @@ class CoinCap(ExchangeBase):
 class CoinGecko(ExchangeBase):
 
     async def get_rates(self, ccy):
-        json = await self.get_json('api.coingecko.com', '/api/v3/coins/litecoin?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=false')
+        json = await self.get_json('api.coingecko.com', '/api/v3/coins/marscoin?localization=false&tickers=false&community_data=false&developer_data=false&sparkline=false')
         return dict([(ccy.upper(), to_decimal(d))
                      for ccy, d in json['market_data']['current_price'].items()])
 
@@ -281,7 +281,7 @@ class CoinGecko(ExchangeBase):
 
     async def request_history(self, ccy):
         history = await self.get_json('api.coingecko.com',
-                                      '/api/v3/coins/litecoin/market_chart?vs_currency=%s&days=max' % ccy)
+                                      '/api/v3/coins/marscoin/market_chart?vs_currency=%s&days=max' % ccy)
 
         return dict([(datetime.utcfromtimestamp(h[0]/1000).strftime('%Y-%m-%d'), str(h[1]))
                      for h in history['prices']])

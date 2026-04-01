@@ -264,8 +264,8 @@ class Commands:
     @command('')
     async def restore(self, text, passphrase=None, password=None, encrypt_file=True, wallet_path=None):
         """Restore a wallet from text. Text can be a seed phrase, a master
-        public key, a master private key, a list of Litecoin addresses
-        or Litecoin private keys.
+        public key, a master private key, a list of Marscoin addresses
+        or Marscoin private keys.
         If you want to be prompted for an argument, type '?' or ':' (concealed)
         """
         # TODO create a separate command that blocks until wallet is synced
@@ -793,7 +793,7 @@ class Commands:
 
     @command('w')
     async def setlabel(self, key, label, wallet: Abstract_Wallet = None):
-        """Assign a label to an item. Item may be a litecoin address or a
+        """Assign a label to an item. Item may be a marscoin address or a
         transaction ID"""
         wallet.set_label(key, label)
 
@@ -1333,8 +1333,8 @@ def eval_bool(x: str) -> bool:
 
 param_descriptions = {
     'privkey': 'Private key. Type \'?\' to get a prompt.',
-    'destination': 'Litecoin address, contact or alias',
-    'address': 'Litecoin address',
+    'destination': 'Marscoin address, contact or alias',
+    'address': 'Marscoin address',
     'seed': 'Seed phrase',
     'txid': 'Transaction ID',
     'pos': 'Position',
@@ -1435,10 +1435,10 @@ config_variables = {
     'addrequest': {
         'ssl_privkey': 'Path to your SSL private key, needed to sign the request.',
         'ssl_chain': 'Chain of SSL certificates, needed for signed requests. Put your certificate at the top and the root CA at the end',
-        'url_rewrite': 'Parameters passed to str.replace(), in order to create the r= part of litecoin: URIs. Example: \"(\'file:///var/www/\',\'https://electrum-mars.org/\')\"',
+        'url_rewrite': 'Parameters passed to str.replace(), in order to create the r= part of marscoin: URIs. Example: \"(\'file:///var/www/\',\'https://electrum-mars.org/\')\"',
     },
     'listrequests':{
-        'url_rewrite': 'Parameters passed to str.replace(), in order to create the r= part of litecoin: URIs. Example: \"(\'file:///var/www/\',\'https://electrum-mars.org/\')\"',
+        'url_rewrite': 'Parameters passed to str.replace(), in order to create the r= part of marscoin: URIs. Example: \"(\'file:///var/www/\',\'https://electrum-mars.org/\')\"',
     }
 }
 
@@ -1531,7 +1531,7 @@ def get_parser():
     subparsers = parser.add_subparsers(dest='cmd', metavar='<command>')
     # gui
     parser_gui = subparsers.add_parser('gui', description="Run Electrum's Graphical User Interface.", help="Run GUI (default)")
-    parser_gui.add_argument("url", nargs='?', default=None, help="litecoin URI (or bip70 file)")
+    parser_gui.add_argument("url", nargs='?', default=None, help="marscoin URI (or bip70 file)")
     parser_gui.add_argument("-g", "--gui", dest="gui", help="select graphical user interface", choices=['qt', 'kivy', 'text', 'stdio', 'qml'])
     parser_gui.add_argument("-m", action="store_true", dest="hide_gui", default=False, help="hide GUI on startup")
     parser_gui.add_argument("-L", "--lang", dest="language", default=None, help="default language used in GUI")

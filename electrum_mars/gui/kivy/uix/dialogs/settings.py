@@ -55,7 +55,7 @@ Builder.load_string('''
                 SettingsItem:
                     bu: app.base_unit
                     title: _('Denomination') + ': ' + self.bu
-                    description: _("Base unit for Litecoin amounts.")
+                    description: _("Base unit for Marscoin amounts.")
                     action: partial(root.unit_dialog, self)
                 CardSeparator
                 SettingsItem:

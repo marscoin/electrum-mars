@@ -74,9 +74,9 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
         self.amount_e = BTCAmountEdit(self.window.get_decimal_point)
         self.payto_e = PayToEdit(self)
         msg = (_("Recipient of the funds.") + "\n\n"
-               + _("You may enter a Litecoin address, a label from your list of contacts "
+               + _("You may enter a Marscoin address, a label from your list of contacts "
                    "(a list of completions will be proposed), "
-                   "or an alias (email-like address that forwards to a Litecoin address)") + ". "
+                   "or an alias (email-like address that forwards to a Marscoin address)") + ". "
                + _("Lightning invoices are also supported.") + "\n\n"
                + _("You can also pay to many outputs in a single transaction, "
                    "specifying one output per line.") + "\n" + _("Format: address, amount") + "\n"
@@ -601,7 +601,7 @@ class SendTab(QWidget, MessageBoxMixin, Logger):
 
         for o in outputs:
             if o.scriptpubkey is None:
-                self.show_error(_('Litecoin Address is None'))
+                self.show_error(_('Marscoin Address is None'))
                 return True
             if o.value is None:
                 self.show_error(_('Invalid Amount'))

@@ -547,7 +547,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
             addr = str(addrs[0])
             if not bitcoin.is_address(addr):
                 neutered_addr = addr[:5] + '..' + addr[-2:]
-                raise WalletFileException(f'The addresses in this wallet are not litecoin addresses.\n'
+                raise WalletFileException(f'The addresses in this wallet are not marscoin addresses.\n'
                                           f'e.g. {neutered_addr} (length: {len(addr)})')
 
     def check_returned_address_for_corruption(func):
@@ -690,7 +690,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         if self.is_watching_only():
             raise Exception(_("This is a watching-only wallet"))
         if not is_address(address):
-            raise Exception(f"Invalid Litecoin address: {address}")
+            raise Exception(f"Invalid Marscoin address: {address}")
         if not self.is_mine(address):
             raise Exception(_('Address not in wallet.') + f' {address}')
         index = self.get_address_index(address)
@@ -2643,7 +2643,7 @@ class Abstract_Wallet(ABC, Logger, EventListener):
         pass
 
     def price_at_timestamp(self, txid, price_func):
-        """Returns fiat price of Litecoin at the time tx got confirmed."""
+        """Returns fiat price of Marscoin at the time tx got confirmed."""
         timestamp = self.adb.get_tx_height(txid).timestamp
         return price_func(timestamp if timestamp else time.time())
 

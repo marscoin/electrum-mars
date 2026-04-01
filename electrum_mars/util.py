@@ -82,9 +82,9 @@ def all_subclasses(cls) -> Set:
 ca_path = certifi.where()
 
 
-base_units = {'LTC':8, 'mLTC':5, 'uLTC':2, 'sat':0}
+base_units = {'MARS':8, 'mMARS':5, 'uMARS':2, 'sat':0}
 base_units_inverse = inv_dict(base_units)
-base_units_list = ['LTC', 'mLTC', 'uLTC', 'sat']  # list(dict) does not guarantee order
+base_units_list = ['MARS', 'mMARS', 'uMARS', 'sat']  # list(dict) does not guarantee order
 
 DECIMAL_POINT_DEFAULT = 8  # LTC
 
@@ -828,13 +828,13 @@ def time_difference(distance_in_time, include_seconds):
 mainnet_block_explorers = {
     'Bitaps.com': ('https://ltc.bitaps.com/',
                         {'tx': '', 'addr': ''}),
-    'Blockchair.com': ('https://blockchair.com/litecoin/',
+    'Blockchair.com': ('https://blockchair.com/marscoin/',
                         {'tx': 'transaction/', 'addr': 'address/'}),
-    'Blockchair.com (Tor)': ('http://blkchairbknpn73cfjhevhla7rkp4ed5gg2knctvv7it4lioy22defid.onion/litecoin/',
+    'Blockchair.com (Tor)': ('http://blkchairbknpn73cfjhevhla7rkp4ed5gg2knctvv7it4lioy22defid.onion/marscoin/',
                         {'tx': 'transaction/', 'addr': 'address/'}),
     'BlockCypher.com': ('https://live.blockcypher.com/ltc/',
                         {'tx': 'tx/', 'addr': 'address/'}),
-    'explorer.litecoin.net': ('http://explorer.litecoin.net/',
+    'explorer.marscoin.net': ('http://explorer.marscoin.net/',
                         {'tx': 'tx/', 'addr': 'address/'}),
     'LiteCore': ('https://insight.litecore.io/',
                         {'tx': 'tx/', 'addr': 'address/'}),
@@ -929,7 +929,7 @@ def block_explorer_URL(config: 'SimpleConfig', kind: str, item: str) -> Optional
 
 
 # note: when checking against these, use .lower() to support case-insensitivity
-BITCOIN_BIP21_URI_SCHEME = 'litecoin'
+BITCOIN_BIP21_URI_SCHEME = 'marscoin'
 LIGHTNING_URI_SCHEME = 'lightning'
 
 
@@ -948,12 +948,12 @@ def parse_URI(uri: str, on_pr: Callable = None, *, loop=None) -> dict:
 
     if ':' not in uri:
         if not bitcoin.is_address(uri):
-            raise InvalidBitcoinURI("Not a litecoin address")
+            raise InvalidBitcoinURI("Not a marscoin address")
         return {'address': uri}
 
     u = urllib.parse.urlparse(uri)
     if u.scheme.lower() != BITCOIN_BIP21_URI_SCHEME:
-        raise InvalidBitcoinURI("Not a litecoin URI")
+        raise InvalidBitcoinURI("Not a marscoin URI")
     address = u.path
 
     # python for android fails to parse query
@@ -970,7 +970,7 @@ def parse_URI(uri: str, on_pr: Callable = None, *, loop=None) -> dict:
     out = {k: v[0] for k, v in pq.items()}
     if address:
         if not bitcoin.is_address(address):
-            raise InvalidBitcoinURI(f"Invalid litecoin address: {address}")
+            raise InvalidBitcoinURI(f"Invalid marscoin address: {address}")
         out['address'] = address
     if 'amount' in out:
         am = out['amount']
@@ -1070,7 +1070,7 @@ def create_bip21_uri(addr, amount_sat: Optional[int], message: Optional[str],
 
 def maybe_extract_lightning_payment_identifier(data: str) -> Optional[str]:
     data = data.strip()  # whitespaces
-    # Litecoin: legacy addresses may start with 'LN'
+    # Marscoin: legacy addresses may start with 'LN'
     if len(data) < 40:
         return None
     data = data.lower()

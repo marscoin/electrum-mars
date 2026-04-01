@@ -12,7 +12,7 @@ from electrum_mars.simple_config import SimpleConfig
 try:
     addr = sys.argv[1]
 except Exception:
-    print("usage: get_history <litecoin_address>")
+    print("usage: get_history <marscoin_address>")
     sys.exit(1)
 
 config = SimpleConfig()
