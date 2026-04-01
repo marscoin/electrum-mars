@@ -424,9 +424,28 @@ class CreateOfferDialog(QDialog):
         self.window = window
         self.engine = engine
         self.orderbook = orderbook
-        self.setWindowTitle(_('Create Swap Offer'))
-        self.setMinimumWidth(400)
+        self.market_rate = 0.0  # BTC per MARS
+        self.setWindowTitle('Create Swap Offer')
+        self.setMinimumWidth(450)
+        self._fetch_price()
         self._setup_ui()
+
+    def _fetch_price(self):
+        """Fetch current market price from price.marscoin.org."""
+        try:
+            import urllib.request, json
+            with urllib.request.urlopen('https://price.marscoin.org/json',
+                                       timeout=10) as resp:
+                data = json.loads(resp.read())
+                mars_usd = data['data']['154']['quote']['USD']['price']
+            with urllib.request.urlopen('https://mempool.space/api/v1/prices',
+                                       timeout=10) as resp:
+                data = json.loads(resp.read())
+                btc_usd = data.get('USD', 83000)
+            self.market_rate = mars_usd / btc_usd
+        except Exception as e:
+            _logger.warning(f"Price fetch failed: {e}")
+            self.market_rate = 0.0
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -435,22 +454,49 @@ class CreateOfferDialog(QDialog):
 
         self.mars_amount = QLineEdit()
         self.mars_amount.setPlaceholderText('100')
-        form.addRow(_('MARS to sell:'), self.mars_amount)
+        form.addRow('MARS to sell:', self.mars_amount)
+
+        # Auto-price checkbox + fee slider
+        from PyQt5.QtWidgets import QCheckBox, QSlider, QSpinBox
+
+        price_row = QHBoxLayout()
+        self.auto_price_cb = QCheckBox('Use CMC spot price +')
+        self.auto_price_cb.setChecked(True)
+        self.auto_price_cb.toggled.connect(self._on_auto_price_toggled)
+        price_row.addWidget(self.auto_price_cb)
+
+        self.fee_spin = QSpinBox()
+        self.fee_spin.setRange(1, 50)
+        self.fee_spin.setValue(5)
+        self.fee_spin.setSuffix('% fee')
+        self.fee_spin.valueChanged.connect(self._recalc_btc)
+        price_row.addWidget(self.fee_spin)
+        form.addRow('', price_row)
 
         self.btc_amount = QLineEdit()
         self.btc_amount.setPlaceholderText('0.001')
+        self.btc_amount.setReadOnly(True)  # read-only when auto-price is on
         form.addRow('BTC to receive:', self.btc_amount)
+
+        # Market info
+        if self.market_rate > 0:
+            spot_label = QLabel(
+                f'CMC spot: {self.market_rate:.10f} BTC/MARS '
+                f'(${self.market_rate * 83000:.4f}/MARS)')
+            spot_label.setStyleSheet("color: gray; font-size: 11px;")
+            form.addRow('', spot_label)
 
         self.timeout_hours = QComboBox()
         self.timeout_hours.addItems(['2 hours', '4 hours', '6 hours', '12 hours'])
         self.timeout_hours.setCurrentIndex(1)
-        form.addRow(_('Offer valid for:'), self.timeout_hours)
+        form.addRow('Offer valid for:', self.timeout_hours)
 
         layout.addLayout(form)
 
         # Info label
         self.info_label = QLabel('')
-        self.mars_amount.textChanged.connect(self._update_info)
+        self.info_label.setStyleSheet("font-weight: bold; padding: 5px;")
+        self.mars_amount.textChanged.connect(self._recalc_btc)
         self.btc_amount.textChanged.connect(self._update_info)
         layout.addWidget(self.info_label)
 
@@ -461,14 +507,45 @@ class CreateOfferDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+        # Trigger initial calculation
+        self._recalc_btc()
+
+    def _on_auto_price_toggled(self, checked):
+        self.btc_amount.setReadOnly(checked)
+        self.fee_spin.setEnabled(checked)
+        if checked:
+            self._recalc_btc()
+
+    def _recalc_btc(self):
+        """Recalculate BTC amount from MARS amount + market rate + fee."""
+        if not self.auto_price_cb.isChecked() or self.market_rate <= 0:
+            self._update_info()
+            return
+        try:
+            mars = float(self.mars_amount.text() or '0')
+            if mars <= 0:
+                self.btc_amount.setText('')
+                self.info_label.setText('')
+                return
+            fee = self.fee_spin.value() / 100.0
+            rate_with_fee = self.market_rate * (1 + fee)
+            btc = mars * rate_with_fee
+            self.btc_amount.setText(f'{btc:.8f}')
+            self.info_label.setText(
+                f'Rate: {rate_with_fee:.10f} BTC/MARS '
+                f'(spot + {self.fee_spin.value()}% fee)')
+        except ValueError:
+            pass
+
     def _update_info(self):
+        if self.auto_price_cb.isChecked():
+            return  # handled by _recalc_btc
         try:
             mars = float(self.mars_amount.text() or '0')
             btc = float(self.btc_amount.text() or '0')
             if mars > 0 and btc > 0:
                 rate = btc / mars
-                self.info_label.setText(
-                    f'Rate: {rate:.8f} BTC/MARS')
+                self.info_label.setText(f'Rate: {rate:.10f} BTC/MARS')
             else:
                 self.info_label.setText('')
         except ValueError:
