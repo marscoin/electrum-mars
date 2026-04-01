@@ -29,6 +29,7 @@ from electrum_mars.logging import get_logger
 
 from .swap_engine import SwapEngine, SwapData, SwapState, SwapRole
 from .orderbook import OrderBook, SwapOffer
+from .automaker import AutoMaker, AutoMakerConfig
 
 if TYPE_CHECKING:
     from electrum_mars.gui.qt.main_window import ElectrumWindow
@@ -78,6 +79,9 @@ class AtomicSwapTab(QWidget):
         self.engine = engine
         self.orderbook = orderbook
 
+        data_dir = os.path.join(window.config.electrum_path(), 'atomic_swaps')
+        self.automaker = AutoMaker(engine, orderbook, data_dir)
+
         self._setup_ui()
         self._start_refresh_timer()
 
@@ -85,22 +89,24 @@ class AtomicSwapTab(QWidget):
         layout = QVBoxLayout(self)
 
         # Header
-        header = QLabel(_('Atomic Swaps — Trade BTC for MARS, Peer-to-Peer'))
+        # Note: don't use _() for strings containing "BTC" — the i18n module
+        # replaces "BTC" with "MARS" which mangles our cross-chain labels
+        header = QLabel('Atomic Swaps \u2014 Trade BTC for MARS, Peer-to-Peer')
         header.setFont(QFont('', 14, QFont.Bold))
         layout.addWidget(header)
 
-        desc = QLabel(_('No exchange needed. Trustless settlement via hash time-locked contracts.'))
+        desc = QLabel('No exchange needed. Trustless settlement via hash time-locked contracts.')
         desc.setStyleSheet("color: gray;")
         layout.addWidget(desc)
 
         # Action buttons
         btn_layout = QHBoxLayout()
-        self.buy_btn = QPushButton(_('Buy MARS with BTC'))
+        self.buy_btn = QPushButton('Buy MARS with BTC')
         self.buy_btn.clicked.connect(self._on_buy_mars)
         self.buy_btn.setStyleSheet("font-size: 14px; padding: 10px; background-color: #c0392b; color: white;")
         btn_layout.addWidget(self.buy_btn)
 
-        self.sell_btn = QPushButton(_('Sell MARS for BTC'))
+        self.sell_btn = QPushButton('Sell MARS for BTC')
         self.sell_btn.clicked.connect(self._on_sell_mars)
         self.sell_btn.setStyleSheet("font-size: 14px; padding: 10px;")
         btn_layout.addWidget(self.sell_btn)
@@ -108,7 +114,17 @@ class AtomicSwapTab(QWidget):
         self.refresh_btn = QPushButton(_('Refresh Offers'))
         self.refresh_btn.clicked.connect(self._refresh_offers)
         btn_layout.addWidget(self.refresh_btn)
+
+        self.automaker_btn = QPushButton('Auto-Maker')
+        self.automaker_btn.clicked.connect(self._on_automaker)
+        self.automaker_btn.setStyleSheet("font-size: 14px; padding: 10px; background-color: #2c3e50; color: white;")
+        btn_layout.addWidget(self.automaker_btn)
         layout.addLayout(btn_layout)
+
+        # Auto-maker status bar
+        self.automaker_status = QLabel('')
+        self.automaker_status.setStyleSheet("color: #27ae60; font-size: 12px; padding: 2px;")
+        layout.addWidget(self.automaker_status)
 
         # Sub-tabs
         self.sub_tabs = QTabWidget()
@@ -138,8 +154,8 @@ class AtomicSwapTab(QWidget):
         self.offers_table = QTableWidget()
         self.offers_table.setColumnCount(5)
         self.offers_table.setHorizontalHeaderLabels([
-            _('MARS Amount'), _('BTC Amount'), _('Rate (BTC/MARS)'),
-            _('Maker'), _('Action'),
+            'MARS Amount', 'BTC Amount', 'Rate (BTC/MARS)',
+            'Maker', 'Action',
         ])
         self.offers_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch)
@@ -155,7 +171,7 @@ class AtomicSwapTab(QWidget):
         self.active_table = QTableWidget()
         self.active_table.setColumnCount(6)
         self.active_table.setHorizontalHeaderLabels([
-            _('Swap ID'), _('Role'), _('MARS'), _('BTC'),
+            _('Swap ID'), _('Role'), _('MARS'), 'BTC',
             _('Status'), _('Time'),
         ])
         self.active_table.horizontalHeader().setSectionResizeMode(
@@ -171,7 +187,7 @@ class AtomicSwapTab(QWidget):
         self.history_table = QTableWidget()
         self.history_table.setColumnCount(6)
         self.history_table.setHorizontalHeaderLabels([
-            _('Swap ID'), _('Role'), _('MARS'), _('BTC'),
+            _('Swap ID'), _('Role'), _('MARS'), 'BTC',
             _('Status'), _('Date'),
         ])
         self.history_table.horizontalHeader().setSectionResizeMode(
@@ -226,6 +242,7 @@ class AtomicSwapTab(QWidget):
         self._refresh_offers()
         self._refresh_active()
         self._refresh_history()
+        self._update_automaker_status()
 
     def _refresh_offers(self):
         offers = self.orderbook.get_offers()
@@ -283,6 +300,30 @@ class AtomicSwapTab(QWidget):
                 summary['state'].replace('_', ' ').upper()))
             self.history_table.setItem(i, 5, QTableWidgetItem(
                 time.strftime('%Y-%m-%d', time.localtime(swap.created_at))))
+
+    def _on_automaker(self):
+        """Open auto-maker configuration dialog."""
+        d = AutoMakerDialog(self.window, self.automaker)
+        d.exec_()
+        self._update_automaker_status()
+
+    def _update_automaker_status(self):
+        if self.automaker.is_running():
+            s = self.automaker.get_status_summary()
+            self.automaker_status.setText(
+                f"\u2022 Auto-Maker ACTIVE \u2014 "
+                f"Fee: {s['fee_percent']:.1f}% | "
+                f"Offers: {s['active_offers']} | "
+                f"Available: {s['available_balance']:.2f} MARS | "
+                f"Earned: {s['total_btc_earned']:.8f} BTC | "
+                f"Rate: {s['last_rate']:.10f} BTC/MARS"
+            )
+            self.automaker_btn.setStyleSheet(
+                "font-size: 14px; padding: 10px; background-color: #27ae60; color: white;")
+        else:
+            self.automaker_status.setText('')
+            self.automaker_btn.setStyleSheet(
+                "font-size: 14px; padding: 10px; background-color: #2c3e50; color: white;")
 
     def _on_buy_mars(self):
         """User wants to buy MARS with BTC."""
@@ -385,7 +426,7 @@ class CreateOfferDialog(QDialog):
 
         self.btc_amount = QLineEdit()
         self.btc_amount.setPlaceholderText('0.001')
-        form.addRow(_('BTC to receive:'), self.btc_amount)
+        form.addRow('BTC to receive:', self.btc_amount)
 
         self.timeout_hours = QComboBox()
         self.timeout_hours.addItems(['2 hours', '4 hours', '6 hours', '12 hours'])
@@ -468,4 +509,159 @@ class CreateOfferDialog(QDialog):
               f'Share the offer JSON from the Manual Exchange tab, '
               f'or wait for someone to accept it.'))
 
+        self.accept()
+
+
+class AutoMakerDialog(QDialog):
+    """Dialog for configuring the Auto-Maker — passive market making."""
+
+    def __init__(self, window: 'ElectrumWindow', automaker: AutoMaker):
+        QDialog.__init__(self, window)
+        self.window = window
+        self.automaker = automaker
+        self.setWindowTitle('Auto-Maker \u2014 Passive Market Making')
+        self.setMinimumWidth(500)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Header
+        header = QLabel('Turn your wallet into a market maker')
+        header.setFont(QFont('', 13, QFont.Bold))
+        layout.addWidget(header)
+
+        desc = QLabel(
+            'Set it and forget it. Your wallet will automatically create swap offers,\n'
+            'selling MARS for BTC at the market rate plus your fee. Earn a steady\n'
+            'commission while helping the Marscoin ecosystem.'
+        )
+        desc.setStyleSheet("color: gray; margin-bottom: 10px;")
+        layout.addWidget(desc)
+
+        # Status
+        status = self.automaker.get_status_summary()
+        if self.automaker.is_running():
+            status_label = QLabel('\u2705 Auto-Maker is RUNNING')
+            status_label.setStyleSheet("color: #27ae60; font-weight: bold; font-size: 14px;")
+        else:
+            status_label = QLabel('\u26aa Auto-Maker is STOPPED')
+            status_label.setStyleSheet("color: gray; font-weight: bold; font-size: 14px;")
+        layout.addWidget(status_label)
+
+        # Configuration form
+        config = self.automaker.config
+        form = QFormLayout()
+
+        self.fee_input = QLineEdit(str(config.fee_percent))
+        self.fee_input.setToolTip('Percentage added to market rate (your profit)')
+        form.addRow('Fee spread (%):', self.fee_input)
+
+        self.daily_limit = QLineEdit(str(int(config.daily_limit_mars_sat / 1e8)))
+        self.daily_limit.setToolTip('Maximum MARS to sell in a 24-hour period')
+        form.addRow('Daily limit (MARS):', self.daily_limit)
+
+        self.max_swap = QLineEdit(str(int(config.max_single_swap_sat / 1e8)))
+        self.max_swap.setToolTip('Maximum MARS per single swap')
+        form.addRow('Max per swap (MARS):', self.max_swap)
+
+        self.min_swap = QLineEdit(str(int(config.min_single_swap_sat / 1e8)))
+        self.min_swap.setToolTip('Minimum MARS per swap (prevents dust)')
+        form.addRow('Min per swap (MARS):', self.min_swap)
+
+        self.reserve = QLineEdit(str(config.reserve_percent))
+        self.reserve.setToolTip('Percentage of balance to keep unlocked (safety)')
+        form.addRow('Reserve (%):', self.reserve)
+
+        self.num_offers = QComboBox()
+        self.num_offers.addItems(['1', '2', '3', '5', '10'])
+        idx = ['1', '2', '3', '5', '10'].index(str(config.num_offers)) \
+            if str(config.num_offers) in ['1', '2', '3', '5', '10'] else 2
+        self.num_offers.setCurrentIndex(idx)
+        self.num_offers.setToolTip('Number of concurrent offers to maintain')
+        form.addRow('Concurrent offers:', self.num_offers)
+
+        self.refresh_interval = QComboBox()
+        self.refresh_interval.addItems([
+            '1 minute', '5 minutes', '15 minutes', '30 minutes', '1 hour'])
+        intervals = [60, 300, 900, 1800, 3600]
+        current_idx = 1
+        for i, v in enumerate(intervals):
+            if config.refresh_interval_sec <= v:
+                current_idx = i
+                break
+        self.refresh_interval.setCurrentIndex(current_idx)
+        form.addRow('Price refresh:', self.refresh_interval)
+
+        layout.addLayout(form)
+
+        # Earnings summary
+        earnings_group = QGroupBox('Earnings Summary')
+        earnings_layout = QFormLayout(earnings_group)
+        earnings_layout.addRow('BTC earned (total):',
+            QLabel(f"{status['total_btc_earned']:.8f} BTC"))
+        earnings_layout.addRow('MARS sold (total):',
+            QLabel(f"{status['total_mars_sold']:.2f} MARS"))
+        earnings_layout.addRow('Swaps completed:',
+            QLabel(str(status['swaps_completed'])))
+        earnings_layout.addRow('Sold today:',
+            QLabel(f"{status['today_sold']:.2f} / {status['daily_limit']:.0f} MARS"))
+        if status['last_rate'] > 0:
+            earnings_layout.addRow('Current rate:',
+                QLabel(f"{status['last_rate']:.10f} BTC/MARS "
+                       f"(${status['last_mars_usd']:.4f}/MARS)"))
+        layout.addWidget(earnings_group)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+
+        if self.automaker.is_running():
+            self.toggle_btn = QPushButton('\u23f9  Stop Auto-Maker')
+            self.toggle_btn.setStyleSheet(
+                "font-size: 14px; padding: 10px; background-color: #e74c3c; color: white;")
+        else:
+            self.toggle_btn = QPushButton('\u25b6  Start Auto-Maker')
+            self.toggle_btn.setStyleSheet(
+                "font-size: 14px; padding: 10px; background-color: #27ae60; color: white;")
+        self.toggle_btn.clicked.connect(self._toggle)
+        btn_layout.addWidget(self.toggle_btn)
+
+        save_btn = QPushButton('Save Settings')
+        save_btn.clicked.connect(self._save_settings)
+        btn_layout.addWidget(save_btn)
+
+        close_btn = QPushButton('Close')
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+
+        layout.addLayout(btn_layout)
+
+    def _save_settings(self):
+        try:
+            config = self.automaker.config
+            config.fee_percent = float(self.fee_input.text())
+            config.daily_limit_mars_sat = int(float(self.daily_limit.text()) * 1e8)
+            config.max_single_swap_sat = int(float(self.max_swap.text()) * 1e8)
+            config.min_single_swap_sat = int(float(self.min_swap.text()) * 1e8)
+            config.reserve_percent = float(self.reserve.text())
+            config.num_offers = int(self.num_offers.currentText())
+            intervals = [60, 300, 900, 1800, 3600]
+            config.refresh_interval_sec = intervals[self.refresh_interval.currentIndex()]
+            self.automaker.save_config()
+            QMessageBox.information(self, 'Saved', 'Auto-Maker settings saved.')
+        except Exception as e:
+            QMessageBox.warning(self, 'Error', f'Invalid settings: {e}')
+
+    def _toggle(self):
+        if self.automaker.is_running():
+            self.automaker.stop()
+            QMessageBox.information(self, 'Stopped',
+                'Auto-Maker stopped. No new offers will be created.')
+        else:
+            self._save_settings()
+            self.automaker.start()
+            QMessageBox.information(self, 'Started',
+                'Auto-Maker started! Your wallet is now a market maker.\n\n'
+                'Offers will be created and refreshed automatically based on\n'
+                'the live MARS/BTC price from price.marscoin.org.')
         self.accept()
