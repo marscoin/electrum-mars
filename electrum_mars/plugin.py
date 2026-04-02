@@ -97,7 +97,8 @@ class Plugins(DaemonThread):
             if details:
                 self.register_keystore(name, gui_good, details)
             self.descriptions[name] = d
-            if not d.get('requires_wallet_type') and self.config.get('use_' + name):
+            should_load = self.config.get('use_' + name) or d.get('default_on', False)
+            if not d.get('requires_wallet_type') and should_load:
                 try:
                     self.load_plugin(name)
                 except BaseException as e:
