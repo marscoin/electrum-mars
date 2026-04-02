@@ -101,6 +101,37 @@ from .qrreader import scan_qrcode
 from .swap_dialog import SwapDialog
 from .balance_dialog import BalanceToolButton, COLOR_FROZEN, COLOR_UNMATURED, COLOR_UNCONFIRMED, COLOR_CONFIRMED, COLOR_LIGHTNING, COLOR_FROZEN_LIGHTNING
 
+def _create_scrypt_warning():
+    """Create a warning banner if native scrypt is not installed."""
+    from electrum_mars.blockchain import SCRYPT_NATIVE
+    if SCRYPT_NATIVE:
+        return None
+    import platform
+    system = platform.system()
+    if system == 'Darwin':
+        install_cmd = 'pip3 install scrypt'
+    elif system == 'Windows':
+        install_cmd = 'pip install scrypt'
+    else:
+        install_cmd = 'sudo apt-get install python3-scrypt  OR  pip3 install scrypt'
+
+    from PyQt5.QtWidgets import QLabel
+    from PyQt5.QtCore import Qt
+    label = QLabel(
+        f'\u26a0\ufe0f  <b>Slow sync:</b> Native scrypt package not found. '
+        f'Synchronization will be ~100x slower. '
+        f'Install it with: <code>{install_cmd}</code>'
+    )
+    label.setTextFormat(Qt.RichText)
+    label.setStyleSheet(
+        "background-color: #fff3cd; color: #856404; "
+        "padding: 8px; border: 1px solid #ffc107; border-radius: 4px; "
+        "margin: 4px;"
+    )
+    label.setWordWrap(True)
+    return label
+
+
 if TYPE_CHECKING:
     from . import ElectrumGui
 
@@ -235,6 +266,12 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         central_widget = QScrollArea()
         vbox = QVBoxLayout(central_widget)
         vbox.setContentsMargins(0, 0, 0, 0)
+
+        # Scrypt warning banner
+        scrypt_banner = _create_scrypt_warning()
+        if scrypt_banner:
+            vbox.addWidget(scrypt_banner)
+
         vbox.addWidget(tabs)
         vbox.addWidget(coincontrol_sb)
 
