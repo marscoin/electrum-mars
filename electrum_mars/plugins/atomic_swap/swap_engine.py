@@ -407,15 +407,19 @@ class SwapEngine:
             fee_sat=int(fee_sat),
         )
 
-        # Broadcast to Bitcoin network
-        # Note: this requires a Bitcoin broadcast mechanism
-        # For MVP, we serialize and let the user broadcast manually
-        swap.btc_claim_txid = claim_tx.txid()
+        # Broadcast via mempool.space
+        raw_hex = claim_tx.serialize()
+        result_txid = await self.btc_monitor.broadcast_tx(raw_hex)
+        if not result_txid:
+            raise Exception(f"Failed to broadcast BTC claim tx for swap {swap_id}")
+
+        swap.btc_claim_txid = result_txid
         swap.state = SwapState.BTC_CLAIMED.value
         self.db.save(swap)
 
-        _logger.info(f"Swap {swap_id}: BTC claimed, preimage revealed")
-        return claim_tx.serialize()
+        _logger.info(f"Swap {swap_id}: BTC claimed, txid={result_txid}, "
+                    f"preimage revealed on chain")
+        return raw_hex
 
     async def wait_for_preimage_and_claim_mars(self, swap_id: str,
                                                 password=None) -> Optional[str]:

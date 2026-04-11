@@ -34,7 +34,9 @@ hiddenimports += collect_submodules('bitstring')
 hiddenimports += ['electrum_mars.plugins.atomic_swap']
 hiddenimports += ['electrum_mars.plugins.atomic_swap.qt']
 hiddenimports += ['electrum_mars.plugins.atomic_swap.swap_engine']
+hiddenimports += ['electrum_mars.plugins.atomic_swap.swap_worker']
 hiddenimports += ['electrum_mars.plugins.atomic_swap.orderbook']
+hiddenimports += ['electrum_mars.plugins.atomic_swap.automaker']
 hiddenimports += ['electrum_mars.atomic_swap_htlc']
 hiddenimports += ['electrum_mars.btc_monitor']
 

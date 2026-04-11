@@ -218,3 +218,24 @@ class BtcMonitor:
         if result:
             return result.get('halfHourFee', 10)
         return 10  # fallback
+
+    async def broadcast_tx(self, tx_hex: str) -> Optional[str]:
+        """Broadcast a raw Bitcoin transaction via mempool.space.
+
+        POST /api/tx with raw hex body. Returns the txid on success,
+        None on failure.
+        """
+        session = await self._get_session()
+        url = f"{self.base_url}/tx"
+        try:
+            async with session.post(url, data=tx_hex) as resp:
+                text = await resp.text()
+                if resp.status == 200:
+                    _logger.info(f"Broadcast BTC tx: {text}")
+                    return text.strip()
+                else:
+                    _logger.warning(f"BTC broadcast failed ({resp.status}): {text}")
+                    return None
+        except Exception as e:
+            _logger.warning(f"BTC broadcast error: {e}")
+            return None

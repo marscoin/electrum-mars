@@ -30,6 +30,7 @@ from electrum_mars.logging import get_logger
 from .swap_engine import SwapEngine, SwapData, SwapState, SwapRole
 from .orderbook import OrderBook, SwapOffer
 from .automaker import AutoMaker, AutoMakerConfig
+from .swap_worker import SwapWorker
 
 if TYPE_CHECKING:
     from electrum_mars.gui.qt.main_window import ElectrumWindow
@@ -65,10 +66,31 @@ class Plugin(BasePlugin):
         window.tabs.addTab(tab, tab.tab_icon, 'Atomic Swap')
         self.windows[wallet] = tab
 
+        # Start the background worker that drives active swaps forward
+        try:
+            def password_getter():
+                if wallet.has_password():
+                    return window.password_dialog()
+                return None
+            worker = SwapWorker(engine, password_getter=password_getter)
+            if network:
+                network.run_from_another_thread(
+                    self._start_worker_coro(worker))
+            tab._swap_worker = worker
+        except Exception as e:
+            from electrum_mars.logging import get_logger
+            get_logger(__name__).warning(f'Could not start SwapWorker: {e}')
+
+    async def _start_worker_coro(self, worker):
+        worker.start()
+
     @hook
     def on_close_window(self, window: 'ElectrumWindow'):
         wallet = window.wallet
         if wallet in self.windows:
+            tab = self.windows[wallet]
+            if hasattr(tab, '_swap_worker') and tab._swap_worker:
+                tab._swap_worker.stop()
             tab = self.windows.pop(wallet)
             idx = window.tabs.indexOf(tab)
             if idx >= 0:
@@ -534,6 +556,26 @@ class AtomicSwapTab(QWidget):
             mars_locktime=offer.mars_locktime,
             current_btc_height=btc_height,
         )
+
+        # Notify the maker that we accepted the offer — they need our
+        # pubkey to build the MARS HTLC script and fund it.
+        if self.engine.network:
+            try:
+                acceptance = {
+                    'taker_pubkey': swap.my_pubkey,
+                    'btc_htlc_address': swap.btc_htlc_address,
+                    'btc_locktime': swap.btc_locktime,
+                    'timestamp': time.time(),
+                }
+                interface = self.engine.network.interface
+                if interface:
+                    coro = interface.session.send_request(
+                        'atomicswap.accept_offer',
+                        [offer.offer_id, acceptance])
+                    self.engine.network.run_from_another_thread(coro)
+                    _logger.info(f'Sent acceptance for offer {offer.offer_id[:8]}')
+            except Exception as e:
+                _logger.warning(f'Could not send acceptance: {e}')
 
         # Show BTC HTLC address with QR code
         d = BtcPaymentDialog(self, swap)
