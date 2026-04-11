@@ -2551,65 +2551,126 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         self.gui_object.close_window(self)
 
     def resync_wallet(self):
-        """Force a full resync of the wallet: clears local tx history and
-        re-subscribes all addresses to ElectrumX for a fresh scan.
+        """Force a full resync: query each wallet address via the server's
+        self-healing repair RPC (which cross-checks against marscoind),
+        import any missing transactions, and refresh the history.
 
         Useful when the wallet's view of its balance is out of sync with
-        the actual on-chain state (e.g. due to past server lag or crashes).
-        Keeps addresses, keys, labels, and wallet metadata intact.
+        the actual on-chain state (e.g. due to past server index corruption
+        or sync issues).
         """
         reply = QMessageBox.question(
             self,
             _('Resync Wallet'),
-            _('This will clear the local transaction history and re-fetch '
-              'it from the network. Your addresses, keys, and labels will '
-              'be preserved.\n\n'
+            _('This will scan all your addresses against the server and '
+              'repair any missing transactions by cross-checking with '
+              'the Marscoin blockchain.\n\n'
               'Use this if your balance display seems wrong or out of sync.\n\n'
-              'The wallet will restart automatically. Continue?'),
+              'Continue?'),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
 
-        try:
-            wallet = self.wallet
-            db = wallet.db
+        if not self.network or not self.network.interface:
+            QMessageBox.warning(self, _('Resync Failed'),
+                                _('Not connected to a server.'))
+            return
 
-            # Clear all tx history fields, keep keys/addresses/labels
-            fields_to_clear = [
-                'transactions', 'verified_tx3', 'txi', 'txo',
-                'spent_outpoints', 'prevouts_by_scripthash',
-                'tx_fees', 'addr_history',
-            ]
-            for key in fields_to_clear:
+        # Do the resync in a background thread
+        from PyQt5.QtCore import QThread, pyqtSignal
+
+        class ResyncThread(QThread):
+            done = pyqtSignal(int, int, str)  # (found, imported, error)
+
+            def __init__(self, window):
+                super().__init__()
+                self.window = window
+
+            def run(self):
+                import asyncio as _asyncio
+                from electrum_mars import bitcoin as _bitcoin
+                wallet = self.window.wallet
+                network = self.window.network
+                addresses = wallet.get_addresses()
+
+                found_count = 0
+                imported_count = 0
+                error = ''
+
+                async def do_repair():
+                    nonlocal found_count, imported_count, error
+                    interface = network.interface
+                    for addr in addresses:
+                        try:
+                            sh = _bitcoin.address_to_scripthash(addr)
+                            result = await interface.session.send_request(
+                                'blockchain.scripthash.repair',
+                                [sh, addr],
+                                timeout=60)
+                            if result:
+                                for entry in result:
+                                    found_count += 1
+                                    txid = entry.get('tx_hash')
+                                    height = entry.get('height', 0)
+                                    # Check if we already have it
+                                    if wallet.db.get_transaction(txid):
+                                        continue
+                                    # Fetch raw tx and import
+                                    try:
+                                        raw = await interface.session.send_request(
+                                            'blockchain.transaction.get',
+                                            [txid], timeout=30)
+                                        from electrum_mars.transaction import Transaction
+                                        tx = Transaction(raw)
+                                        wallet.adb.add_transaction(tx)
+                                        # Mark as verified at the given height
+                                        if height > 0:
+                                            wallet.adb.add_verified_tx(txid, None)
+                                        imported_count += 1
+                                    except Exception as e:
+                                        _logger = wallet.logger if hasattr(wallet, 'logger') else None
+                                        if _logger:
+                                            _logger.warning(f'import {txid}: {e}')
+                        except Exception as e:
+                            error = str(e)
+                            continue
+
                 try:
-                    d = db.get(key)
-                    if isinstance(d, dict):
-                        d.clear()
-                except Exception:
-                    pass
+                    network.run_from_another_thread(do_repair())
+                except Exception as e:
+                    error = str(e)
 
-            # Reset stored height so the wallet re-fetches from genesis
-            # within the checkpoint region
-            try:
-                db.put('stored_height', 0)
-            except Exception:
-                pass
+                self.done.emit(found_count, imported_count, error)
 
-            # Save the cleared wallet
-            wallet.save_db()
+        self._resync_thread = ResyncThread(self)
+        self._resync_thread.done.connect(self._on_resync_done)
+        self._resync_thread.start()
 
-            QMessageBox.information(
-                self, _('Resync Started'),
-                _('Wallet history cleared. Please close and reopen the '
-                  'wallet now — it will re-fetch all transactions from '
-                  'the network automatically.\n\n'
-                  'This may take 10-30 seconds depending on how many '
-                  'addresses you have.'))
-        except Exception as e:
+        QMessageBox.information(
+            self, _('Resync Started'),
+            _('Resync started in the background. This may take a minute '
+              'or two depending on how many addresses you have.\n\n'
+              'You\'ll see a notification when it completes.'))
+
+    def _on_resync_done(self, found, imported, error):
+        if error:
             QMessageBox.warning(
-                self, _('Resync Failed'),
-                _('Could not resync wallet:\n\n') + str(e))
+                self, _('Resync Error'),
+                _(f'Resync encountered an error:\n\n{error}\n\n'
+                  f'Found {found} transactions, imported {imported}.'))
+        else:
+            QMessageBox.information(
+                self, _('Resync Complete'),
+                _(f'Scanned {len(self.wallet.get_addresses())} addresses.\n'
+                  f'Found {found} transactions.\n'
+                  f'Imported {imported} missing transactions.\n\n'
+                  f'Balance should now be correct. If not, try closing '
+                  f'and reopening the wallet.'))
+        try:
+            self.need_update.set()
+        except Exception:
+            pass
 
     def plugins_dialog(self):
         self.pluginsdialog = d = WindowModalDialog(self, _('Electrum Plugins'))
