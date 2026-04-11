@@ -487,6 +487,89 @@ class SwapEngine:
         _logger.info(f"Swap {swap_id}: MARS refunded")
         return refund_tx.txid()
 
+    async def refund_btc_htlc(
+        self,
+        swap_id: str,
+        btc_refund_address: str,
+    ) -> str:
+        """Refund the BTC HTLC after timeout (taker safety net).
+
+        The taker creates a BTC HTLC when accepting an offer. If the swap
+        doesn't complete (maker never claims, goes offline, etc), after
+        the locktime expires the taker can use this to recover their BTC
+        to an address they control.
+
+        Args:
+            swap_id: the swap identifier
+            btc_refund_address: where to send the refunded BTC
+
+        Returns:
+            The refund transaction txid
+        """
+        swap = self.db.load(swap_id)
+        if not swap:
+            raise Exception(f"Swap {swap_id} not found")
+        if swap.role != SwapRole.TAKER.value:
+            raise Exception("Only takers can refund BTC (they funded it)")
+        if not swap.btc_htlc_script:
+            raise Exception("No BTC HTLC script in swap data")
+
+        # We need to find the actual BTC funding tx — check mempool.space
+        funding_info = await self.btc_monitor.check_htlc_funded(
+            swap.btc_htlc_address,
+            swap.btc_amount_sat,
+            min_confirmations=0,
+        )
+        if not funding_info:
+            # Also try the stored txid (maybe already confirmed and spent?)
+            if swap.btc_funding_txid:
+                funding_info = {
+                    'txid': swap.btc_funding_txid,
+                    'vout': swap.btc_funding_vout,
+                    'value': swap.btc_amount_sat,
+                }
+            else:
+                raise Exception(
+                    f"Cannot find BTC funding tx for {swap.btc_htlc_address}. "
+                    f"Nothing to refund.")
+
+        # Check we're past the locktime (best effort — Bitcoin node enforces it)
+        current_height = await self.btc_monitor.get_block_height()
+        if current_height and swap.btc_locktime and current_height < swap.btc_locktime:
+            remaining = swap.btc_locktime - current_height
+            raise Exception(
+                f"Too early to refund: current BTC block {current_height}, "
+                f"locktime {swap.btc_locktime}. "
+                f"Wait {remaining} more blocks (~{remaining*10} minutes).")
+
+        # Get current fee rate
+        fee_rate = await self.btc_monitor.get_fee_rate()
+        fee_sat = fee_rate * 200
+
+        refund_tx = create_refund_tx(
+            funding_txid=funding_info['txid'],
+            funding_vout=funding_info['vout'],
+            funding_amount_sat=funding_info.get('value', swap.btc_amount_sat),
+            witness_script=bfh(swap.btc_htlc_script),
+            refund_privkey=bfh(swap.my_privkey),
+            destination_address=btc_refund_address,
+            locktime=swap.btc_locktime,
+            fee_sat=int(fee_sat),
+        )
+
+        # Broadcast via mempool.space
+        raw_hex = refund_tx.serialize()
+        result_txid = await self.btc_monitor.broadcast_tx(raw_hex)
+        if not result_txid:
+            raise Exception(
+                f"Failed to broadcast BTC refund tx. Raw hex:\n{raw_hex}")
+
+        swap.state = SwapState.BTC_REFUNDED.value
+        self.db.save(swap)
+
+        _logger.info(f"Swap {swap_id}: BTC refunded, txid={result_txid}")
+        return result_txid
+
     def get_swap(self, swap_id: str) -> Optional[SwapData]:
         return self.db.load(swap_id)
 

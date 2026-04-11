@@ -419,11 +419,32 @@ class AtomicSwapTab(QWidget):
             else:
                 age_str = f'{age_min // 1440}d ago'
             self.active_table.setItem(i, 5, QTableWidgetItem(age_str))
-            # Cancel button for CREATED state (not yet funded)
+            # Action button depends on state and role
             if swap.state == SwapState.CREATED.value:
                 cancel_btn = QPushButton('Cancel')
                 cancel_btn.clicked.connect(lambda _, s=swap: self._cancel_swap(s))
                 self.active_table.setCellWidget(i, 6, cancel_btn)
+            elif (swap.role == SwapRole.TAKER.value
+                  and swap.state in (SwapState.CREATED.value,
+                                     SwapState.BTC_LOCKED.value)
+                  and swap.btc_htlc_address):
+                # Taker can refund BTC after timelock
+                refund_btn = QPushButton('Refund BTC')
+                refund_btn.setStyleSheet(
+                    "background-color: #e67e22; color: white;")
+                refund_btn.clicked.connect(
+                    lambda _, s=swap: self._refund_btc_swap(s))
+                self.active_table.setCellWidget(i, 6, refund_btn)
+            elif (swap.role == SwapRole.MAKER.value
+                  and swap.state == SwapState.MARS_LOCKED.value
+                  and swap.mars_funding_txid):
+                # Maker can refund MARS after timelock
+                refund_btn = QPushButton('Refund MARS')
+                refund_btn.setStyleSheet(
+                    "background-color: #e67e22; color: white;")
+                refund_btn.clicked.connect(
+                    lambda _, s=swap: self._refund_mars_swap(s))
+                self.active_table.setCellWidget(i, 6, refund_btn)
 
     def _refresh_history(self):
         swaps = self.engine.get_all_swaps()
@@ -476,6 +497,49 @@ class AtomicSwapTab(QWidget):
             except Exception:
                 pass
         self._refresh_all()
+
+    def _refund_btc_swap(self, swap: SwapData):
+        """Taker reclaims BTC from the HTLC after timelock expires."""
+        d = BtcRefundDialog(self, swap)
+        d.exec_()
+        self._refresh_all()
+
+    def _refund_mars_swap(self, swap: SwapData):
+        """Maker reclaims MARS from the HTLC after timelock expires."""
+        reply = QMessageBox.question(
+            self, 'Refund MARS',
+            f'Refund the MARS HTLC back to your wallet?\n\n'
+            f'Amount: {swap.mars_amount_sat/1e8:.4f} MARS\n'
+            f'Locktime: block {swap.mars_locktime}\n\n'
+            f'This only succeeds after the locktime has passed.\n'
+            f'Before that, the Marscoin network will reject the tx.',
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        if not self.engine.network:
+            QMessageBox.warning(self, 'Error', 'Not connected to network')
+            return
+
+        # Get password if wallet is encrypted
+        password = None
+        if self.engine.wallet.has_password():
+            password = self.window.password_dialog()
+            if password is None:
+                return
+
+        try:
+            async def do_refund():
+                return await self.engine.refund_mars_htlc(
+                    swap.swap_id, password=password)
+
+            coro = do_refund()
+            result = self.engine.network.run_from_another_thread(coro)
+            QMessageBox.information(
+                self, 'MARS Refunded',
+                f'Refund broadcast!\n\nTxid: {result}')
+        except Exception as e:
+            QMessageBox.warning(self, 'Refund Failed', str(e))
 
     def _on_automaker(self):
         """Open auto-maker configuration dialog."""
@@ -1264,3 +1328,161 @@ class BtcPaymentDialog(QDialog):
         from PyQt5.QtWidgets import QApplication
         QApplication.clipboard().setText(text or '')
         QMessageBox.information(self, 'Copied', 'Address copied to clipboard!')
+
+
+class BtcRefundDialog(QDialog):
+    """Dialog for refunding a stuck BTC HTLC back to the user's Bitcoin wallet.
+
+    Shows the swap details, asks where to send the refund, checks if the
+    timelock has expired, and broadcasts the refund transaction via
+    mempool.space.
+    """
+
+    def __init__(self, parent, swap: SwapData):
+        QDialog.__init__(self, parent)
+        self.parent_tab = parent
+        self.swap = swap
+        self.setWindowTitle('Refund BTC HTLC')
+        self.setMinimumWidth(500)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        header = QLabel('Refund BTC from Stuck Swap')
+        header.setFont(QFont('', 14, QFont.Bold))
+        layout.addWidget(header)
+
+        info = QLabel(
+            f'Swap ID: {self.swap.swap_id[:12]}...\n'
+            f'Locked BTC: {self.swap.btc_amount_sat/1e8:.8f} BTC\n'
+            f'HTLC address: {self.swap.btc_htlc_address}\n'
+            f'Locktime: Bitcoin block {self.swap.btc_locktime}\n\n'
+            f'You can reclaim your BTC after the locktime expires.\n'
+            f'Before that, Bitcoin nodes will reject the refund tx.'
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("padding: 10px; background: #f8f9fa; border-radius: 5px;")
+        layout.addWidget(info)
+
+        form = QFormLayout()
+        self.refund_addr_input = QLineEdit()
+        self.refund_addr_input.setPlaceholderText('bc1q... (your BTC address)')
+        # Try to reuse the saved BTC receive address from the wallet config
+        try:
+            saved = self.parent_tab.engine.wallet.config.get(
+                'atomic_swap_btc_receive_addr', '')
+            if saved:
+                self.refund_addr_input.setText(saved)
+        except Exception:
+            pass
+        form.addRow('Send refund to:', self.refund_addr_input)
+        layout.addLayout(form)
+
+        # Status label (will show timelock check result + broadcast result)
+        self.status_label = QLabel('')
+        self.status_label.setWordWrap(True)
+        self.status_label.setStyleSheet(
+            "padding: 10px; margin-top: 10px; border-radius: 5px;")
+        layout.addWidget(self.status_label)
+
+        btn_layout = QHBoxLayout()
+        check_btn = QPushButton('Check Timelock')
+        check_btn.clicked.connect(self._check_timelock)
+        btn_layout.addWidget(check_btn)
+
+        self.refund_btn = QPushButton('Broadcast Refund')
+        self.refund_btn.setStyleSheet(
+            "background-color: #e67e22; color: white; font-weight: bold; padding: 10px;")
+        self.refund_btn.clicked.connect(self._do_refund)
+        btn_layout.addWidget(self.refund_btn)
+
+        close_btn = QPushButton('Close')
+        close_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(close_btn)
+
+        layout.addLayout(btn_layout)
+
+    def _check_timelock(self):
+        """Query mempool.space for current block height and show status."""
+        import urllib.request
+        try:
+            req = urllib.request.Request(
+                'https://mempool.space/api/blocks/tip/height',
+                headers={'User-Agent': 'Electrum-Mars/4.3.2'})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                current_height = int(resp.read())
+        except Exception as e:
+            self.status_label.setText(f'\u26a0 Could not fetch height: {e}')
+            self.status_label.setStyleSheet(
+                "background: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px;")
+            return
+
+        locktime = self.swap.btc_locktime
+        if current_height >= locktime:
+            blocks_past = current_height - locktime
+            self.status_label.setText(
+                f'\u2705  Locktime expired — you can refund now.\n'
+                f'Current block: {current_height}\n'
+                f'Locktime: {locktime}\n'
+                f'Blocks past: {blocks_past}')
+            self.status_label.setStyleSheet(
+                "background: #d4edda; color: #155724; padding: 10px; border-radius: 5px;")
+        else:
+            remaining = locktime - current_height
+            eta_min = remaining * 10
+            hours = eta_min // 60
+            mins = eta_min % 60
+            self.status_label.setText(
+                f'\u23f3  Not yet refundable.\n'
+                f'Current block: {current_height}\n'
+                f'Locktime: {locktime}\n'
+                f'Blocks remaining: {remaining} '
+                f'(approx {hours}h {mins}m)')
+            self.status_label.setStyleSheet(
+                "background: #fff3cd; color: #856404; padding: 10px; border-radius: 5px;")
+
+    def _do_refund(self):
+        refund_addr = self.refund_addr_input.text().strip()
+        if not refund_addr:
+            QMessageBox.warning(self, 'Error',
+                                'Please enter a BTC refund address.')
+            return
+        if not (refund_addr.startswith('bc1')
+                or refund_addr.startswith('1')
+                or refund_addr.startswith('3')):
+            QMessageBox.warning(self, 'Error',
+                                'Invalid BTC address format.')
+            return
+
+        reply = QMessageBox.question(
+            self, 'Confirm Refund',
+            f'Broadcast BTC refund transaction?\n\n'
+            f'Refund to: {refund_addr}\n'
+            f'Amount: {self.swap.btc_amount_sat/1e8:.8f} BTC (minus network fee)\n\n'
+            f'This action is final once broadcast.',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        network = self.parent_tab.engine.network
+        if not network:
+            QMessageBox.warning(self, 'Error', 'Not connected to network.')
+            return
+
+        try:
+            async def do_refund():
+                return await self.parent_tab.engine.refund_btc_htlc(
+                    self.swap.swap_id, refund_addr)
+            txid = network.run_from_another_thread(do_refund())
+            self.status_label.setText(
+                f'\u2705  Refund broadcast!\n\n'
+                f'Tx ID: {txid}\n\n'
+                f'Check it on mempool.space:\n'
+                f'https://mempool.space/tx/{txid}')
+            self.status_label.setStyleSheet(
+                "background: #d4edda; color: #155724; padding: 10px; border-radius: 5px;")
+            self.refund_btn.setEnabled(False)
+        except Exception as e:
+            QMessageBox.warning(self, 'Refund Failed', str(e))
