@@ -142,56 +142,119 @@ class OrderBook:
             self.add_offer(offer)
 
     async def fetch_from_electrumx(self, network) -> List[SwapOffer]:
-        """Fetch offers from connected ElectrumX server.
+        """Fetch offers from ALL connected ElectrumX servers.
 
-        Uses the atomicswap.get_offers RPC method (requires ElectrumX extension).
-        Falls back gracefully if the server doesn't support it.
+        Queries every interface in parallel via atomicswap.get_offers
+        and merges the results. This catches offers that only exist on
+        servers other than the primary, which is useful when server-
+        side gossip is not yet fully propagated (or not all servers
+        support the extension).
 
-        Also PRUNES offers that exist locally but not on the server
-        (except our own offers which we keep locally).
+        Also PRUNES offers that no server reports anymore (except our
+        own offers which we keep locally).
         """
+        import asyncio as _asyncio
         try:
-            interface = network.interface
-            if interface is None:
+            with network.interfaces_lock:
+                interfaces = list(network.interfaces.values())
+            if not interfaces:
                 return []
-            result = await interface.session.send_request(
-                'atomicswap.get_offers', [])
-            if result and isinstance(result, list):
-                # Build set of server offer IDs for pruning
-                server_ids = {item.get('offer_id') for item in result}
-                # Prune offers we have but server doesn't (and aren't ours)
-                to_remove = [
-                    oid for oid in list(self._offers.keys())
-                    if oid not in server_ids and oid not in self._my_offers
-                ]
-                for oid in to_remove:
-                    del self._offers[oid]
 
-                offers = []
+            async def query_one(iface):
+                try:
+                    result = await iface.session.send_request(
+                        'atomicswap.get_offers', [], timeout=15)
+                    if isinstance(result, list):
+                        return result
+                except Exception:
+                    # Server doesn't support atomic swap, or timed out
+                    pass
+                return []
+
+            # Query all servers in parallel
+            results = await _asyncio.gather(
+                *[query_one(iface) for iface in interfaces],
+                return_exceptions=True)
+
+            # Flatten, dedupe by offer_id, count how many servers had each
+            merged = {}  # offer_id -> offer dict
+            any_server_responded = False
+            for result in results:
+                if isinstance(result, Exception):
+                    continue
+                if result is None:
+                    continue
+                any_server_responded = True
                 for item in result:
+                    oid = item.get('offer_id')
+                    if oid and oid not in merged:
+                        merged[oid] = item
+
+            if not any_server_responded:
+                _logger.debug('atomicswap: no servers responded')
+                return []
+
+            # Prune local offers no server reports (except our own)
+            server_ids = set(merged.keys())
+            to_remove = [
+                oid for oid in list(self._offers.keys())
+                if oid not in server_ids and oid not in self._my_offers
+            ]
+            for oid in to_remove:
+                del self._offers[oid]
+
+            if merged:
+                num_servers = sum(1 for r in results
+                                  if isinstance(r, list))
+                offers = []
+                for item in merged.values():
                     offer = SwapOffer(**item)
                     self.add_offer(offer)
                     offers.append(offer)
-                _logger.info(f"Fetched {len(offers)} offers from ElectrumX")
+                _logger.info(
+                    f"Fetched {len(offers)} offers from "
+                    f"{num_servers} ElectrumX server(s)")
                 return offers
+            return []
         except Exception as e:
             # Server doesn't support atomic swap RPC — that's OK
             _logger.debug(f"ElectrumX atomicswap not available: {e}")
         return []
 
     async def publish_to_electrumx(self, network, offer: SwapOffer) -> bool:
-        """Publish an offer to the ElectrumX server.
+        """Publish an offer to ALL connected ElectrumX servers.
 
-        Uses the atomicswap.post_offer RPC method.
+        Sending to every known server in parallel maximizes propagation
+        speed in case server-side gossip isn't fully deployed or fails
+        to reach some peers. Returns True if at least one server accepted.
         """
+        import asyncio as _asyncio
         try:
-            interface = network.interface
-            if interface is None:
+            with network.interfaces_lock:
+                interfaces = list(network.interfaces.values())
+            if not interfaces:
                 return False
-            await interface.session.send_request(
-                'atomicswap.post_offer', [asdict(offer)])
-            _logger.info(f"Published offer {offer.offer_id[:8]} to ElectrumX")
-            return True
+
+            offer_dict = asdict(offer)
+
+            async def publish_one(iface):
+                try:
+                    await iface.session.send_request(
+                        'atomicswap.post_offer', [offer_dict], timeout=15)
+                    return True
+                except Exception:
+                    return False
+
+            results = await _asyncio.gather(
+                *[publish_one(iface) for iface in interfaces],
+                return_exceptions=True)
+            success_count = sum(1 for r in results if r is True)
+            if success_count > 0:
+                _logger.info(
+                    f"Published offer {offer.offer_id[:8]} to "
+                    f"{success_count}/{len(interfaces)} ElectrumX server(s)")
+                return True
+            return False
         except Exception as e:
             _logger.debug(f"Could not publish to ElectrumX: {e}")
             return False
