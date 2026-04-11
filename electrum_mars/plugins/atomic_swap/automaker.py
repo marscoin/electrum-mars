@@ -62,6 +62,8 @@ class AutoMakerConfig:
     buy_fee_percent: float = DEFAULT_FEE_PERCENT
     # Number of concurrent offers to maintain
     num_offers: int = 3
+    # Maker's BTC receive address — required for auto-maker to run
+    btc_receive_address: str = ""
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -237,6 +239,11 @@ class AutoMaker:
         if not self.config.enabled:
             return
 
+        if not self.config.btc_receive_address:
+            _logger.warning(
+                "Auto-maker: no BTC receive address configured, skipping")
+            return
+
         prices = await self.fetch_market_price()
         if not prices:
             _logger.warning("Auto-maker: cannot fetch price, skipping")
@@ -269,6 +276,7 @@ class AutoMaker:
                 mars_amount_sat=mars_sat,
                 btc_amount_sat=btc_sat,
                 current_mars_height=current_height,
+                btc_receive_address=self.config.btc_receive_address,
             )
 
             from .orderbook import SwapOffer

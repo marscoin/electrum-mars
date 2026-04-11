@@ -638,6 +638,22 @@ class CreateOfferDialog(QDialog):
             self.auto_price_cb.setChecked(False)
             self.btc_amount.setReadOnly(False)
 
+        # BTC receive address — where the maker's BTC is paid
+        self.btc_receive_addr = QLineEdit()
+        self.btc_receive_addr.setPlaceholderText('bc1q... (your Bitcoin address)')
+        # Try to load saved address
+        saved_addr = self.engine.wallet.config.get('atomic_swap_btc_receive_addr', '')
+        if saved_addr:
+            self.btc_receive_addr.setText(saved_addr)
+        form.addRow('BTC receive address:', self.btc_receive_addr)
+
+        hint = QLabel('\u2139 This is YOUR Bitcoin address where you\'ll receive '
+                      'the BTC when your MARS sells.\n'
+                      'Get it from any Bitcoin wallet (Electrum, Sparrow, hardware, exchange).')
+        hint.setStyleSheet("color: gray; font-size: 11px;")
+        hint.setWordWrap(True)
+        form.addRow('', hint)
+
         self.timeout_hours = QComboBox()
         self.timeout_hours.addItems(['2 hours', '4 hours', '6 hours', '12 hours'])
         self.timeout_hours.setCurrentIndex(1)
@@ -739,6 +755,26 @@ class CreateOfferDialog(QDialog):
             if reply != QMessageBox.Yes:
                 return
 
+        # Validate BTC receive address
+        btc_receive = self.btc_receive_addr.text().strip()
+        if not btc_receive:
+            QMessageBox.warning(
+                self, 'BTC Address Required',
+                'You must provide a Bitcoin address where you will receive '
+                'the BTC payment when your MARS sells.\n\n'
+                'This should be an address you control in any Bitcoin wallet.')
+            return
+        if not (btc_receive.startswith('bc1') or btc_receive.startswith('1')
+                or btc_receive.startswith('3')):
+            QMessageBox.warning(
+                self, 'Invalid BTC Address',
+                'The BTC address should start with "bc1", "1", or "3".\n\n'
+                'Please enter a valid mainnet Bitcoin address.')
+            return
+        # Save for next time
+        self.engine.wallet.config.set_key(
+            'atomic_swap_btc_receive_addr', btc_receive)
+
         # Get current Marscoin block height
         current_height = self.engine.network.blockchain().height() if self.engine.network else 0
 
@@ -747,6 +783,7 @@ class CreateOfferDialog(QDialog):
             mars_amount_sat=mars_sat,
             btc_amount_sat=btc_sat,
             current_mars_height=current_height,
+            btc_receive_address=btc_receive,
         )
 
         # Create the offer for the order book
@@ -831,6 +868,12 @@ class AutoMakerDialog(QDialog):
         # Configuration form
         config = self.automaker.config
         form = QFormLayout()
+
+        self.btc_receive_addr_am = QLineEdit(config.btc_receive_address)
+        self.btc_receive_addr_am.setPlaceholderText('bc1q... (required)')
+        self.btc_receive_addr_am.setToolTip(
+            'Your Bitcoin address where BTC earnings will be paid. Required!')
+        form.addRow('BTC receive address:', self.btc_receive_addr_am)
 
         self.fee_input = QLineEdit(str(config.fee_percent))
         self.fee_input.setToolTip('Percentage added to market rate (your profit)')
@@ -918,6 +961,12 @@ class AutoMakerDialog(QDialog):
     def _save_settings(self):
         try:
             config = self.automaker.config
+            btc_addr = self.btc_receive_addr_am.text().strip()
+            if btc_addr and not (btc_addr.startswith('bc1') or
+                                  btc_addr.startswith('1') or
+                                  btc_addr.startswith('3')):
+                raise ValueError('Invalid BTC address')
+            config.btc_receive_address = btc_addr
             config.fee_percent = float(self.fee_input.text())
             config.daily_limit_mars_sat = int(float(self.daily_limit.text()) * 1e8)
             config.max_single_swap_sat = int(float(self.max_swap.text()) * 1e8)
@@ -938,6 +987,12 @@ class AutoMakerDialog(QDialog):
                 'Auto-Maker stopped. No new offers will be created.')
         else:
             self._save_settings()
+            if not self.automaker.config.btc_receive_address:
+                QMessageBox.warning(
+                    self, 'BTC Address Required',
+                    'You must enter a Bitcoin receive address before starting '
+                    'Auto-Maker.\n\nThis is where your BTC earnings will be paid.')
+                return
             self.automaker.start()
             QMessageBox.information(self, 'Started',
                 'Auto-Maker started! Your wallet is now a market maker.\n\n'

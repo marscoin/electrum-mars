@@ -95,6 +95,10 @@ class SwapData:
     btc_funding_vout: int = 0
     btc_claim_txid: Optional[str] = None
 
+    # Maker's BTC receive address — where the claimed BTC is sent
+    # (maker provides this when creating the offer)
+    btc_receive_address: Optional[str] = None
+
     # Metadata
     peer_id: Optional[str] = None     # peer identifier (pubkey or address)
     created_at: float = 0.0
@@ -207,6 +211,7 @@ class SwapEngine:
         mars_amount_sat: int,
         btc_amount_sat: int,
         current_mars_height: int,
+        btc_receive_address: Optional[str] = None,
     ) -> SwapData:
         """Initialize a new swap as maker (selling MARS for BTC).
 
@@ -230,11 +235,13 @@ class SwapEngine:
             my_privkey=my_priv.hex(),
             my_pubkey=my_pub.hex(),
             mars_locktime=mars_locktime,
+            btc_receive_address=btc_receive_address,
             created_at=time.time(),
         )
         self.db.save(swap)
         _logger.info(f"Created maker swap {swap_id}: "
-                    f"{mars_amount_sat} MARS sat for {btc_amount_sat} BTC sat")
+                    f"{mars_amount_sat} MARS sat for {btc_amount_sat} BTC sat "
+                    f"(BTC->: {btc_receive_address})")
         return swap
 
     def create_taker_swap(
@@ -382,10 +389,12 @@ class SwapEngine:
         fee_rate = await self.btc_monitor.get_fee_rate()
         fee_sat = fee_rate * 200  # ~200 vB for a claim tx
 
-        # For now, we need a BTC destination address
-        # In production, this would be configurable
-        # Using the maker's own BTC address (they need to provide one)
-        btc_destination = swap.btc_htlc_address  # placeholder
+        # Use the maker's pre-configured BTC receive address
+        btc_destination = swap.btc_receive_address
+        if not btc_destination:
+            raise Exception(
+                f"Swap {swap_id}: no BTC receive address set! "
+                f"Cannot claim BTC without a destination.")
 
         claim_tx = create_claim_tx(
             funding_txid=swap.btc_funding_txid,
