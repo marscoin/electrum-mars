@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget,
     QTextEdit, QLineEdit, QGroupBox, QFormLayout, QMessageBox,
-    QProgressBar, QDialog, QDialogButtonBox, QComboBox,
+    QProgressBar, QDialog, QDialogButtonBox, QComboBox, QSizePolicy,
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
@@ -105,26 +105,39 @@ class AtomicSwapTab(QWidget):
         desc.setStyleSheet("color: gray;")
         layout.addWidget(desc)
 
-        # Action buttons
+        # Action buttons — all same size for visual consistency
         btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
+        BUTTON_MIN_HEIGHT = 44
+        BUTTON_STYLE_BASE = (
+            "font-size: 14px; padding: 10px; "
+            "min-height: {h}px;".format(h=BUTTON_MIN_HEIGHT))
+
         self.buy_btn = QPushButton('Buy MARS with BTC')
         self.buy_btn.clicked.connect(self._on_buy_mars)
-        self.buy_btn.setStyleSheet("font-size: 14px; padding: 10px; background-color: #c0392b; color: white;")
-        btn_layout.addWidget(self.buy_btn)
+        self.buy_btn.setStyleSheet(
+            BUTTON_STYLE_BASE + "background-color: #c0392b; color: white;")
+        self.buy_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_layout.addWidget(self.buy_btn, 1)
 
         self.sell_btn = QPushButton('Sell MARS for BTC')
         self.sell_btn.clicked.connect(self._on_sell_mars)
-        self.sell_btn.setStyleSheet("font-size: 14px; padding: 10px;")
-        btn_layout.addWidget(self.sell_btn)
+        self.sell_btn.setStyleSheet(BUTTON_STYLE_BASE)
+        self.sell_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_layout.addWidget(self.sell_btn, 1)
 
-        self.refresh_btn = QPushButton(_('Refresh Offers'))
+        self.refresh_btn = QPushButton('Refresh Offers')
         self.refresh_btn.clicked.connect(self._refresh_offers)
-        btn_layout.addWidget(self.refresh_btn)
+        self.refresh_btn.setStyleSheet(BUTTON_STYLE_BASE)
+        self.refresh_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_layout.addWidget(self.refresh_btn, 1)
 
         self.automaker_btn = QPushButton('Auto-Maker')
         self.automaker_btn.clicked.connect(self._on_automaker)
-        self.automaker_btn.setStyleSheet("font-size: 14px; padding: 10px; background-color: #2c3e50; color: white;")
-        btn_layout.addWidget(self.automaker_btn)
+        self.automaker_btn.setStyleSheet(
+            BUTTON_STYLE_BASE + "background-color: #2c3e50; color: white;")
+        self.automaker_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_layout.addWidget(self.automaker_btn, 1)
         layout.addLayout(btn_layout)
 
         # Auto-maker status bar
