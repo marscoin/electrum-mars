@@ -38,8 +38,18 @@ from .logging import get_logger
 _logger = get_logger(__name__)
 
 # Timelock constants
-BTC_TIMELOCK_BLOCKS = 36     # ~6 hours at 10 min/block
-MARS_TIMELOCK_BLOCKS = 195   # ~4 hours at 123 sec/block
+#
+# Safety rule: the party that funds LAST refunds FIRST.
+# - Taker funds BTC second  -> BTC locktime must be LOWER
+# - Maker funds MARS first  -> MARS locktime must be HIGHER
+#
+# We keep the absolute values low (4h BTC / 6h MARS) so users don't
+# have to wait days to recover funds from a stalled swap. The 2-hour
+# gap is adequate under normal Bitcoin conditions but tight during
+# extreme fee congestion — a future version may tune these based on
+# observed real-world reliability.
+BTC_TIMELOCK_BLOCKS = 24     # ~4 hours at 10 min/block
+MARS_TIMELOCK_BLOCKS = 175   # ~6 hours at 123 sec/block
 
 # Bitcoin bech32 HRPs
 BTC_SEGWIT_HRP = "bc"
