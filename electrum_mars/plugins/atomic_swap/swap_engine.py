@@ -555,6 +555,7 @@ class SwapEngine:
             destination_address=btc_refund_address,
             locktime=swap.btc_locktime,
             fee_sat=int(fee_sat),
+            destination_is_btc=True,
         )
 
         # Broadcast via mempool.space

@@ -296,6 +296,72 @@ def create_claim_tx(
     return tx
 
 
+def btc_address_to_scriptpubkey(address: str) -> bytes:
+    """Convert a Bitcoin address (bc1..., 1..., 3...) to its scriptPubKey.
+
+    We can't use Electrum's address_to_script() because it defaults to the
+    Marscoin network params. This helper handles bech32 (P2WPKH/P2WSH) and
+    legacy base58 (P2PKH/P2SH) manually for the real Bitcoin network.
+    """
+    from .util import bfh
+    addr = address.strip()
+
+    # Bech32 (segwit)
+    if addr.lower().startswith('bc1') or addr.lower().startswith('tb1') or addr.lower().startswith('bcrt1'):
+        hrp = 'tb' if addr.lower().startswith('tb1') else (
+            'bcrt' if addr.lower().startswith('bcrt1') else 'bc')
+        witver, witprog = segwit_addr.decode_segwit_address(hrp, addr)
+        if witprog is None or witver is None:
+            raise ValueError(f"invalid bech32 address: {address}")
+        # scriptPubKey for witver=0: OP_0 <push 20 or 32 bytes>
+        # For witver=1 (taproot): OP_1 <push 32 bytes>
+        if witver == 0:
+            op = 0x00
+        else:
+            # OP_1 through OP_16 are 0x51..0x60
+            op = 0x50 + witver
+        witprog_bytes = bytes(witprog)
+        return bytes([op, len(witprog_bytes)]) + witprog_bytes
+
+    # Legacy base58
+    import base64
+    # Minimal base58check decoder
+    def _b58decode_check(s: str) -> bytes:
+        alphabet = b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+        n = 0
+        for c in s.encode():
+            n = n * 58 + alphabet.index(c)
+        # Count leading '1's (each represents a leading 0 byte)
+        pad = len(s) - len(s.lstrip('1'))
+        full = n.to_bytes((n.bit_length() + 7) // 8, 'big')
+        data = b'\x00' * pad + full
+        # Verify checksum
+        from .crypto import sha256
+        if sha256(sha256(data[:-4]))[:4] != data[-4:]:
+            raise ValueError(f"invalid base58 checksum: {address}")
+        return data[:-4]
+
+    try:
+        decoded = _b58decode_check(addr)
+    except Exception as e:
+        raise ValueError(f"invalid bitcoin address {address}: {e}")
+
+    if len(decoded) != 21:
+        raise ValueError(f"unexpected base58 payload length: {len(decoded)}")
+
+    version = decoded[0]
+    payload = decoded[1:]
+
+    if version == 0x00:  # P2PKH mainnet
+        # OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
+        return b'\x76\xa9\x14' + payload + b'\x88\xac'
+    elif version == 0x05:  # P2SH mainnet
+        # OP_HASH160 <20 bytes> OP_EQUAL
+        return b'\xa9\x14' + payload + b'\x87'
+    else:
+        raise ValueError(f"unknown BTC address version: {version}")
+
+
 def create_refund_tx(
     funding_txid: str,
     funding_vout: int,
@@ -305,6 +371,7 @@ def create_refund_tx(
     destination_address: str,
     locktime: int,
     fee_sat: int = 300,
+    destination_is_btc: bool = False,
 ) -> PartialTransaction:
     """Create a transaction that refunds an HTLC after the timelock expires.
 
@@ -319,6 +386,9 @@ def create_refund_tx(
         destination_address: where to send the refunded funds
         locktime: must match the CLTV locktime in the script
         fee_sat: transaction fee in satoshis
+        destination_is_btc: if True, treat destination as a real Bitcoin
+            address (uses its own network params, not Marscoin's). Default
+            False for backward compatibility with existing MARS-side refunds.
 
     Returns:
         Signed transaction ready to broadcast (only valid after locktime)
@@ -333,7 +403,16 @@ def create_refund_tx(
     txin.nsequence = 0xfffffffe  # required for CLTV
 
     refund_amount = funding_amount_sat - fee_sat
-    txout = PartialTxOutput.from_address_and_value(destination_address, refund_amount)
+
+    if destination_is_btc:
+        # Bypass Electrum's Marscoin-aware validator and build the
+        # scriptPubKey manually for real Bitcoin addresses.
+        script_bytes = btc_address_to_scriptpubkey(destination_address)
+        from .transaction import TxOutput
+        raw_txout = TxOutput(scriptpubkey=script_bytes, value=refund_amount)
+        txout = PartialTxOutput.from_txout(raw_txout)
+    else:
+        txout = PartialTxOutput.from_address_and_value(destination_address, refund_amount)
 
     # Locktime must be set for CLTV to pass
     tx = PartialTransaction.from_io([txin], [txout], version=2, locktime=locktime)
