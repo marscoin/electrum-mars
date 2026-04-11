@@ -146,6 +146,9 @@ class OrderBook:
 
         Uses the atomicswap.get_offers RPC method (requires ElectrumX extension).
         Falls back gracefully if the server doesn't support it.
+
+        Also PRUNES offers that exist locally but not on the server
+        (except our own offers which we keep locally).
         """
         try:
             interface = network.interface
@@ -154,6 +157,16 @@ class OrderBook:
             result = await interface.session.send_request(
                 'atomicswap.get_offers', [])
             if result and isinstance(result, list):
+                # Build set of server offer IDs for pruning
+                server_ids = {item.get('offer_id') for item in result}
+                # Prune offers we have but server doesn't (and aren't ours)
+                to_remove = [
+                    oid for oid in list(self._offers.keys())
+                    if oid not in server_ids and oid not in self._my_offers
+                ]
+                for oid in to_remove:
+                    del self._offers[oid]
+
                 offers = []
                 for item in result:
                     offer = SwapOffer(**item)
