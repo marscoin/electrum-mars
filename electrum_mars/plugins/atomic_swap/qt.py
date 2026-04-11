@@ -1015,14 +1015,24 @@ class AutoMakerDialog(QDialog):
 
 
 class BtcPaymentDialog(QDialog):
-    """Shows the BTC HTLC address with QR code for the taker to send BTC."""
+    """Shows the BTC HTLC address with QR code for the taker to send BTC.
+
+    Monitors mempool.space in the background to detect when the user
+    has actually sent the BTC, then updates the UI live without the
+    user needing to refresh anything.
+    """
+
+    # Signals from the background polling thread
+    payment_detected = None  # set in __init__
 
     def __init__(self, parent, swap: SwapData):
         QDialog.__init__(self, parent)
         self.swap = swap
         self.setWindowTitle('Send BTC to Complete Swap')
-        self.setMinimumWidth(450)
+        self.setMinimumWidth(500)
+        self._poll_thread = None
         self._setup_ui()
+        self._start_monitoring()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1075,16 +1085,138 @@ class BtcPaymentDialog(QDialog):
         info = QLabel(
             f'\nSend exactly: {btc_amount:.8f} BTC\n'
             f'You will receive: {mars_amount:.4f} MARS\n\n'
-            f'Once your BTC is confirmed on the Bitcoin blockchain,\n'
-            f'the swap will complete automatically.\n\n'
             f'Timelock: ~6 hours (your BTC is refundable if swap fails)'
         )
         info.setAlignment(Qt.AlignCenter)
         layout.addWidget(info)
 
-        close_btn = QPushButton('Done')
-        close_btn.clicked.connect(self.accept)
-        layout.addWidget(close_btn)
+        # Live status bar — updates automatically as BTC arrives
+        self.status_label = QLabel('\u23f3  Waiting for your Bitcoin payment...')
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setStyleSheet(
+            "background: #fff3cd; color: #856404; "
+            "padding: 10px; border: 1px solid #ffc107; "
+            "border-radius: 5px; font-size: 13px; margin-top: 10px;")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        self.close_btn = QPushButton('Cancel — I haven\'t sent yet')
+        self.close_btn.clicked.connect(self.reject)
+        layout.addWidget(self.close_btn)
+
+    def _start_monitoring(self):
+        """Spawn background thread to poll mempool.space."""
+        from PyQt5.QtCore import QThread, pyqtSignal
+
+        class PollThread(QThread):
+            status = pyqtSignal(str, int, int)  # state, confirmations, value_sat
+
+            def __init__(self, address, expected_sat):
+                super().__init__()
+                self.address = address
+                self.expected_sat = expected_sat
+                self._stop = False
+
+            def stop(self):
+                self._stop = True
+
+            def run(self):
+                import time as _time
+                import urllib.request as _ur
+                import json as _json
+
+                url = f'https://mempool.space/api/address/{self.address}/utxo'
+                while not self._stop:
+                    try:
+                        req = _ur.Request(url, headers={
+                            'User-Agent': 'Electrum-Mars/4.3.2'})
+                        with _ur.urlopen(req, timeout=10) as resp:
+                            utxos = _json.loads(resp.read())
+                        if utxos:
+                            # Find a UTXO matching our expected amount
+                            for utxo in utxos:
+                                value = utxo.get('value', 0)
+                                if value >= self.expected_sat:
+                                    status = utxo.get('status', {})
+                                    if status.get('confirmed', False):
+                                        bh = status.get('block_height', 0)
+                                        # Approximate confirmations using a
+                                        # quick tip query
+                                        try:
+                                            with _ur.urlopen(_ur.Request(
+                                                'https://mempool.space/api/blocks/tip/height',
+                                                headers={'User-Agent': 'Electrum-Mars/4.3.2'}),
+                                                timeout=5) as r:
+                                                tip = int(r.read())
+                                            conf = max(1, tip - bh + 1)
+                                        except Exception:
+                                            conf = 1
+                                        self.status.emit(
+                                            'confirmed', conf, value)
+                                    else:
+                                        self.status.emit(
+                                            'mempool', 0, value)
+                                    break
+                            else:
+                                # UTXOs exist but none match amount
+                                self.status.emit('wrong_amount', 0, 0)
+                    except Exception:
+                        pass  # network hiccup — try again next poll
+                    # Sleep in small chunks so stop() is responsive
+                    for _ in range(15):
+                        if self._stop:
+                            return
+                        _time.sleep(1)
+
+        self._poll_thread = PollThread(
+            self.swap.btc_htlc_address, self.swap.btc_amount_sat)
+        self._poll_thread.status.connect(self._on_status_update)
+        self._poll_thread.start()
+
+    def _on_status_update(self, state, confirmations, value_sat):
+        """Update status label with live payment info."""
+        btc = value_sat / 1e8
+        if state == 'mempool':
+            self.status_label.setText(
+                f'\u2705  Payment detected in mempool!\n'
+                f'Received: {btc:.8f} BTC — waiting for confirmation.\n'
+                f'You can safely close this window. The swap will complete\n'
+                f'automatically once the Bitcoin transaction confirms.')
+            self.status_label.setStyleSheet(
+                "background: #d4edda; color: #155724; "
+                "padding: 10px; border: 1px solid #28a745; "
+                "border-radius: 5px; font-size: 13px; margin-top: 10px;")
+            self.close_btn.setText('Close')
+            self.close_btn.setStyleSheet(
+                "background-color: #28a745; color: white; padding: 10px;")
+        elif state == 'confirmed':
+            self.status_label.setText(
+                f'\u2705  Confirmed on Bitcoin ({confirmations} '
+                f'confirmation{"s" if confirmations != 1 else ""})!\n'
+                f'Received: {btc:.8f} BTC\n'
+                f'The swap will complete automatically now.')
+            self.status_label.setStyleSheet(
+                "background: #d4edda; color: #155724; "
+                "padding: 10px; border: 1px solid #28a745; "
+                "border-radius: 5px; font-size: 13px; margin-top: 10px;")
+            self.close_btn.setText('Done')
+            self.close_btn.setStyleSheet(
+                "background-color: #28a745; color: white; padding: 10px;")
+        elif state == 'wrong_amount':
+            self.status_label.setText(
+                f'\u26a0  Transaction detected but amount does not match.\n'
+                f'Expected: {self.swap.btc_amount_sat/1e8:.8f} BTC\n'
+                f'Please send the exact amount.')
+            self.status_label.setStyleSheet(
+                "background: #f8d7da; color: #721c24; "
+                "padding: 10px; border: 1px solid #dc3545; "
+                "border-radius: 5px; font-size: 13px; margin-top: 10px;")
+
+    def closeEvent(self, event):
+        if self._poll_thread:
+            self._poll_thread.stop()
+            self._poll_thread.wait(1000)
+        super().closeEvent(event)
 
     def _copy(self, text):
         from PyQt5.QtWidgets import QApplication
