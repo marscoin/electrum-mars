@@ -2588,8 +2588,8 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                 self.window = window
 
             def run(self):
-                import asyncio as _asyncio
                 from electrum_mars import bitcoin as _bitcoin
+                from electrum_mars.transaction import Transaction
                 wallet = self.window.wallet
                 network = self.window.network
                 addresses = wallet.get_addresses()
@@ -2608,30 +2608,36 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                                 'blockchain.scripthash.repair',
                                 [sh, addr],
                                 timeout=60)
-                            if result:
-                                for entry in result:
-                                    found_count += 1
-                                    txid = entry.get('tx_hash')
-                                    height = entry.get('height', 0)
-                                    # Check if we already have it
-                                    if wallet.db.get_transaction(txid):
-                                        continue
-                                    # Fetch raw tx and import
-                                    try:
-                                        raw = await interface.session.send_request(
-                                            'blockchain.transaction.get',
-                                            [txid], timeout=30)
-                                        from electrum_mars.transaction import Transaction
-                                        tx = Transaction(raw)
-                                        wallet.adb.add_transaction(tx)
-                                        # Mark as verified at the given height
-                                        if height > 0:
-                                            wallet.adb.add_verified_tx(txid, None)
-                                        imported_count += 1
-                                    except Exception as e:
-                                        _logger = wallet.logger if hasattr(wallet, 'logger') else None
-                                        if _logger:
-                                            _logger.warning(f'import {txid}: {e}')
+                            if not result:
+                                continue
+
+                            # Build history list in the format the
+                            # address_synchronizer expects
+                            hist = [(e.get('tx_hash'), e.get('height', 0))
+                                    for e in result if e.get('tx_hash')]
+
+                            # Fetch any missing raw transactions
+                            for txid, height in hist:
+                                found_count += 1
+                                if wallet.db.get_transaction(txid):
+                                    continue
+                                try:
+                                    raw = await interface.session.send_request(
+                                        'blockchain.transaction.get',
+                                        [txid], timeout=30)
+                                    tx = Transaction(raw)
+                                    tx.deserialize()
+                                    # Store the raw tx in the db so
+                                    # receive_history_callback can find it
+                                    wallet.db.add_transaction(txid, tx)
+                                    imported_count += 1
+                                except Exception as e:
+                                    continue
+
+                            # Now update the address history — this
+                            # properly sets up unverified_tx so the
+                            # SPV verifier fetches merkle proofs
+                            wallet.adb.receive_history_callback(addr, hist, {})
                         except Exception as e:
                             error = str(e)
                             continue
@@ -2640,6 +2646,12 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                     network.run_from_another_thread(do_repair())
                 except Exception as e:
                     error = str(e)
+
+                # Save and trigger UI refresh
+                try:
+                    wallet.save_db()
+                except Exception:
+                    pass
 
                 self.done.emit(found_count, imported_count, error)
 
