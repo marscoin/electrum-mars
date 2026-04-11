@@ -440,18 +440,30 @@ class CreateOfferDialog(QDialog):
         """Fetch current market price from price.marscoin.org."""
         try:
             import urllib.request, json
-            with urllib.request.urlopen('https://price.marscoin.org/json',
-                                       timeout=10) as resp:
+            headers = {'User-Agent': 'Electrum-Mars/4.3.2'}
+            req = urllib.request.Request(
+                'https://price.marscoin.org/json', headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read())
                 mars_usd = data['data']['154']['quote']['USD']['price']
-            with urllib.request.urlopen('https://mempool.space/api/v1/prices',
-                                       timeout=10) as resp:
-                data = json.loads(resp.read())
-                btc_usd = data.get('USD', 83000)
+            try:
+                req2 = urllib.request.Request(
+                    'https://mempool.space/api/v1/prices', headers=headers)
+                with urllib.request.urlopen(req2, timeout=10) as resp:
+                    data = json.loads(resp.read())
+                    btc_usd = data.get('USD', 83000)
+            except Exception:
+                btc_usd = 83000  # fallback
             self.market_rate = mars_usd / btc_usd
+            self.mars_usd = mars_usd
+            self.btc_usd = btc_usd
+            _logger.info(f"Price fetched: MARS ${mars_usd:.4f}, BTC ${btc_usd}, "
+                        f"rate {self.market_rate:.10f}")
         except Exception as e:
             _logger.warning(f"Price fetch failed: {e}")
             self.market_rate = 0.0
+            self.mars_usd = 0.0
+            self.btc_usd = 0.0
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -488,9 +500,15 @@ class CreateOfferDialog(QDialog):
         if self.market_rate > 0:
             spot_label = QLabel(
                 f'CMC spot: {self.market_rate:.10f} BTC/MARS '
-                f'(${self.market_rate * 83000:.4f}/MARS)')
+                f'(${self.mars_usd:.4f}/MARS, BTC ${self.btc_usd:,.0f})')
             spot_label.setStyleSheet("color: gray; font-size: 11px;")
             form.addRow('', spot_label)
+        else:
+            warn = QLabel('\u26a0 Price fetch failed — enter BTC manually')
+            warn.setStyleSheet("color: #e74c3c; font-size: 11px;")
+            form.addRow('', warn)
+            self.auto_price_cb.setChecked(False)
+            self.btc_amount.setReadOnly(False)
 
         self.timeout_hours = QComboBox()
         self.timeout_hours.addItems(['2 hours', '4 hours', '6 hours', '12 hours'])
