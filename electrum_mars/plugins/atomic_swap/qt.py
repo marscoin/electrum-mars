@@ -56,7 +56,13 @@ class Plugin(BasePlugin):
         orderbook = OrderBook()
 
         tab = AtomicSwapTab(window, engine, orderbook)
-        window.tabs.addTab(tab, _('Atomic Swap'))
+        # Set attributes expected by the tab iteration code
+        tab.tab_name = 'atomic_swap'
+        tab.tab_description = 'Atomic Swap'
+        tab.tab_pos = 99  # at the end
+        from electrum_mars.gui.qt.util import read_QIcon
+        tab.tab_icon = read_QIcon("marscoin_32x32.png")
+        window.tabs.addTab(tab, tab.tab_icon, 'Atomic Swap')
         self.windows[wallet] = tab
 
     @hook
