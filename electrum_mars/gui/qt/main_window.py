@@ -2590,16 +2590,18 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             def run(self):
                 from electrum_mars import bitcoin as _bitcoin
                 from electrum_mars.transaction import Transaction
+                from electrum_mars.util import TxMinedInfo
                 wallet = self.window.wallet
                 network = self.window.network
                 addresses = wallet.get_addresses()
 
                 found_count = 0
                 imported_count = 0
+                verified_count = 0
                 error = ''
 
                 async def do_repair():
-                    nonlocal found_count, imported_count, error
+                    nonlocal found_count, imported_count, verified_count, error
                     interface = network.interface
                     for addr in addresses:
                         try:
@@ -2616,27 +2618,52 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                             hist = [(e.get('tx_hash'), e.get('height', 0))
                                     for e in result if e.get('tx_hash')]
 
-                            # Fetch any missing raw transactions
-                            for txid, height in hist:
+                            # Import any missing raw txs. The repair RPC
+                            # provides tx_hex directly for repaired entries.
+                            for entry in result:
+                                txid = entry.get('tx_hash')
+                                height = entry.get('height', 0)
+                                if not txid:
+                                    continue
                                 found_count += 1
-                                if wallet.db.get_transaction(txid):
-                                    continue
-                                try:
-                                    raw = await interface.session.send_request(
-                                        'blockchain.transaction.get',
-                                        [txid], timeout=30)
-                                    tx = Transaction(raw)
-                                    tx.deserialize()
-                                    # Store the raw tx in the db so
-                                    # receive_history_callback can find it
-                                    wallet.db.add_transaction(txid, tx)
-                                    imported_count += 1
-                                except Exception as e:
-                                    continue
 
-                            # Now update the address history — this
-                            # properly sets up unverified_tx so the
-                            # SPV verifier fetches merkle proofs
+                                # Get or fetch the raw tx
+                                if not wallet.db.get_transaction(txid):
+                                    tx_hex = entry.get('tx_hex')
+                                    if not tx_hex:
+                                        try:
+                                            tx_hex = await interface.session.send_request(
+                                                'blockchain.transaction.get',
+                                                [txid], timeout=30)
+                                        except Exception:
+                                            continue
+                                    try:
+                                        tx = Transaction(tx_hex)
+                                        tx.deserialize()
+                                        wallet.db.add_transaction(txid, tx)
+                                        imported_count += 1
+                                    except Exception:
+                                        continue
+
+                                # Mark as verified if we have the block info
+                                block_hash = entry.get('block_hash')
+                                timestamp = entry.get('timestamp')
+                                txpos = entry.get('txpos')
+                                if height > 0 and block_hash and timestamp:
+                                    try:
+                                        info = TxMinedInfo(
+                                            height=height,
+                                            conf=1,  # will be recomputed
+                                            timestamp=timestamp,
+                                            txpos=txpos if txpos is not None else 0,
+                                            header_hash=block_hash,
+                                        )
+                                        wallet.adb.add_verified_tx(txid, info)
+                                        verified_count += 1
+                                    except Exception:
+                                        pass
+
+                            # Update the address history
                             wallet.adb.receive_history_callback(addr, hist, {})
                         except Exception as e:
                             error = str(e)
@@ -2647,7 +2674,6 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
                 except Exception as e:
                     error = str(e)
 
-                # Save and trigger UI refresh
                 try:
                     wallet.save_db()
                 except Exception:
