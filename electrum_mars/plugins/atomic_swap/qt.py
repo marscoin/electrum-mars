@@ -175,10 +175,10 @@ class AtomicSwapTab(QWidget):
         layout = QVBoxLayout(w)
 
         self.active_table = QTableWidget()
-        self.active_table.setColumnCount(6)
+        self.active_table.setColumnCount(7)
         self.active_table.setHorizontalHeaderLabels([
-            _('Swap ID'), _('Role'), _('MARS'), 'BTC',
-            _('Status'), _('Time'),
+            'Swap ID', 'Role', 'MARS', 'BTC',
+            'Status', 'Time', 'Action',
         ])
         self.active_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch)
@@ -289,8 +289,20 @@ class AtomicSwapTab(QWidget):
                 f"{summary['btc_amount']:.8f}"))
             self.active_table.setItem(i, 4, QTableWidgetItem(
                 summary['state'].replace('_', ' ').upper()))
-            self.active_table.setItem(i, 5, QTableWidgetItem(
-                f"{summary['age_minutes']}m ago"))
+            # Format age nicely
+            age_min = summary['age_minutes']
+            if age_min < 60:
+                age_str = f'{age_min}m ago'
+            elif age_min < 1440:
+                age_str = f'{age_min // 60}h ago'
+            else:
+                age_str = f'{age_min // 1440}d ago'
+            self.active_table.setItem(i, 5, QTableWidgetItem(age_str))
+            # Cancel button for CREATED state (not yet funded)
+            if swap.state == SwapState.CREATED.value:
+                cancel_btn = QPushButton('Cancel')
+                cancel_btn.clicked.connect(lambda _, s=swap: self._cancel_swap(s))
+                self.active_table.setCellWidget(i, 6, cancel_btn)
 
     def _refresh_history(self):
         swaps = self.engine.get_all_swaps()
@@ -313,6 +325,36 @@ class AtomicSwapTab(QWidget):
                 summary['state'].replace('_', ' ').upper()))
             self.history_table.setItem(i, 5, QTableWidgetItem(
                 time.strftime('%Y-%m-%d', time.localtime(swap.created_at))))
+
+    def _cancel_swap(self, swap: SwapData):
+        """Cancel a swap that hasn't been funded yet."""
+        reply = QMessageBox.question(
+            self, 'Cancel Swap',
+            f'Cancel this swap?\n\n'
+            f'Swap ID: {swap.swap_id[:8]}\n'
+            f'Role: {swap.role.upper()}\n'
+            f'Amount: {swap.mars_amount_sat/1e8:.4f} MARS\n\n'
+            f'This only works for swaps not yet funded on-chain.',
+            QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        # Mark as failed in local DB
+        swap.state = SwapState.FAILED.value
+        swap.error_msg = 'Cancelled by user'
+        self.engine.db.save(swap)
+        # Remove from orderbook
+        self.orderbook.remove_offer(swap.swap_id)
+        # Try to cancel on ElectrumX relay
+        if self.engine.network:
+            try:
+                interface = self.engine.network.interface
+                if interface:
+                    coro = interface.session.send_request(
+                        'atomicswap.cancel_offer', [swap.swap_id])
+                    self.engine.network.run_from_another_thread(coro)
+            except Exception:
+                pass
+        self._refresh_all()
 
     def _on_automaker(self):
         """Open auto-maker configuration dialog."""
@@ -580,12 +622,36 @@ class CreateOfferDialog(QDialog):
             mars_sat = int(float(self.mars_amount.text()) * 1e8)
             btc_sat = int(float(self.btc_amount.text()) * 1e8)
         except ValueError:
-            QMessageBox.warning(self, _('Error'), _('Invalid amounts'))
+            QMessageBox.warning(self, 'Error', 'Invalid amounts')
             return
 
         if mars_sat <= 0 or btc_sat <= 0:
-            QMessageBox.warning(self, _('Error'), _('Amounts must be positive'))
+            QMessageBox.warning(self, 'Error', 'Amounts must be positive')
             return
+
+        # Balance check — can't offer more than you actually have
+        wallet = self.engine.wallet
+        balance = wallet.get_balance()
+        confirmed_sat = balance[0] if balance else 0
+        if mars_sat > confirmed_sat:
+            QMessageBox.warning(
+                self, 'Insufficient Balance',
+                f'You cannot sell {mars_sat/1e8:.4f} MARS.\n\n'
+                f'Your confirmed balance is {confirmed_sat/1e8:.4f} MARS.\n\n'
+                f'(Unconfirmed coins cannot be used for atomic swaps.)')
+            return
+
+        # Safety: warn if committing more than 90% of balance
+        if mars_sat > confirmed_sat * 0.9:
+            reply = QMessageBox.question(
+                self, 'Large Offer Warning',
+                f'You are offering {mars_sat/1e8:.4f} MARS, which is '
+                f'{100*mars_sat/confirmed_sat:.0f}% of your balance.\n\n'
+                f'If this swap completes you will have very little MARS left '
+                f'(plus network fees). Continue?',
+                QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
 
         # Get current Marscoin block height
         current_height = self.engine.network.blockchain().height() if self.engine.network else 0
