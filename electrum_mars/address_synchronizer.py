@@ -413,6 +413,17 @@ class AddressSynchronizer(Logger, EventListener):
     def receive_history_callback(self, addr: str, hist, tx_fees: Dict[str, int]):
         with self.lock:
             old_hist = self.get_address_history(addr)
+            # Safety: if the server reports an empty history for an
+            # address we KNOW has transactions (e.g. the server has a
+            # corrupt index), DO NOT wipe our local verified state.
+            # This protects against server-side index corruption that
+            # would otherwise cause our confirmed txs to revert to
+            # "Local" status on every reconnect.
+            if not hist and old_hist:
+                self.logger.warning(
+                    f"Server reported empty history for {addr} but we "
+                    f"have {len(old_hist)} tx(s). Keeping local state.")
+                return
             for tx_hash, height in old_hist:
                 if (tx_hash, height) not in hist:
                     # make tx local
