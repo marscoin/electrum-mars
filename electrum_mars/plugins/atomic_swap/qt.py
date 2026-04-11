@@ -157,6 +157,13 @@ class AtomicSwapTab(QWidget):
         w = QWidget()
         layout = QVBoxLayout(w)
 
+        # Status bar at top of offers — shows loading/empty state
+        self.offers_status = QLabel('')
+        self.offers_status.setAlignment(Qt.AlignCenter)
+        self.offers_status.setStyleSheet(
+            "color: #7f8c8d; font-size: 13px; padding: 20px;")
+        layout.addWidget(self.offers_status)
+
         self.offers_table = QTableWidget()
         self.offers_table.setColumnCount(5)
         self.offers_table.setHorizontalHeaderLabels([
@@ -167,6 +174,10 @@ class AtomicSwapTab(QWidget):
             QHeaderView.Stretch)
         self.offers_table.setSelectionBehavior(QTableWidget.SelectRows)
         layout.addWidget(self.offers_table)
+
+        # Track loading state
+        self._offers_loading_start = None
+        self._offers_ever_loaded = False
 
         return w
 
@@ -251,11 +262,17 @@ class AtomicSwapTab(QWidget):
         self._update_automaker_status()
 
     def _refresh_offers(self):
+        # Track loading start time on first call
+        if self._offers_loading_start is None:
+            import time as _time
+            self._offers_loading_start = _time.time()
+
         # Fetch from ElectrumX in the background
         if self.window.network:
             try:
                 coro = self.orderbook.fetch_from_electrumx(self.window.network)
                 self.window.network.run_from_another_thread(coro)
+                self._offers_ever_loaded = True
             except Exception:
                 pass  # ElectrumX may not support atomicswap yet
 
@@ -265,11 +282,32 @@ class AtomicSwapTab(QWidget):
         my_offer_ids = {s.swap_id for s in my_swaps
                         if s.role == SwapRole.MAKER.value}
 
-        offers = self.orderbook.get_offers()
         # Don't filter — show all, but mark mine differently
         all_offers = list(self.orderbook._offers.values())
         all_offers = [o for o in all_offers if not o.is_expired()]
         all_offers.sort(key=lambda o: o.rate)
+
+        # Update status message based on state
+        import time as _time
+        elapsed = _time.time() - self._offers_loading_start if self._offers_loading_start else 0
+        if len(all_offers) == 0:
+            if not self._offers_ever_loaded and elapsed < 10:
+                self.offers_status.setText(
+                    '\u231b  Loading offers from the network...')
+                self.offers_table.setVisible(False)
+            elif elapsed < 300:  # 5 minutes
+                self.offers_status.setText(
+                    '\u231b  Searching for offers... ({:.0f}s)'.format(elapsed))
+                self.offers_table.setVisible(False)
+            else:
+                self.offers_status.setText(
+                    '\U0001f4ed  No offers found at the moment.\n\n'
+                    'Click "Sell MARS for BTC" above to create the first offer,\n'
+                    'or enable Auto-Maker to let your wallet trade passively.')
+                self.offers_table.setVisible(False)
+        else:
+            self.offers_status.setText('')
+            self.offers_table.setVisible(True)
 
         self.offers_table.setRowCount(len(all_offers))
         for i, offer in enumerate(all_offers):
