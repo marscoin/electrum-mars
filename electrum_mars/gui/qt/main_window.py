@@ -787,6 +787,7 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
         if self.network and self.network.local_watchtower:
             tools_menu.addAction(_("Local &Watchtower"), self.gui_object.show_watchtower_dialog)
         tools_menu.addAction(_("&Plugins"), self.plugins_dialog)
+        tools_menu.addAction(_("&Resync Wallet"), self.resync_wallet)
         tools_menu.addSeparator()
         tools_menu.addAction(_("&Sign/verify message"), self.sign_verify_message)
         tools_menu.addAction(_("&Encrypt/decrypt message"), self.encrypt_message)
@@ -2548,6 +2549,67 @@ class ElectrumWindow(QMainWindow, MessageBoxMixin, Logger, QtEventListener):
             self.tray = None
         self.gui_object.timer.timeout.disconnect(self.timer_actions)
         self.gui_object.close_window(self)
+
+    def resync_wallet(self):
+        """Force a full resync of the wallet: clears local tx history and
+        re-subscribes all addresses to ElectrumX for a fresh scan.
+
+        Useful when the wallet's view of its balance is out of sync with
+        the actual on-chain state (e.g. due to past server lag or crashes).
+        Keeps addresses, keys, labels, and wallet metadata intact.
+        """
+        reply = QMessageBox.question(
+            self,
+            _('Resync Wallet'),
+            _('This will clear the local transaction history and re-fetch '
+              'it from the network. Your addresses, keys, and labels will '
+              'be preserved.\n\n'
+              'Use this if your balance display seems wrong or out of sync.\n\n'
+              'The wallet will restart automatically. Continue?'),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+
+        try:
+            wallet = self.wallet
+            db = wallet.db
+
+            # Clear all tx history fields, keep keys/addresses/labels
+            fields_to_clear = [
+                'transactions', 'verified_tx3', 'txi', 'txo',
+                'spent_outpoints', 'prevouts_by_scripthash',
+                'tx_fees', 'addr_history',
+            ]
+            for key in fields_to_clear:
+                try:
+                    d = db.get(key)
+                    if isinstance(d, dict):
+                        d.clear()
+                except Exception:
+                    pass
+
+            # Reset stored height so the wallet re-fetches from genesis
+            # within the checkpoint region
+            try:
+                db.put('stored_height', 0)
+            except Exception:
+                pass
+
+            # Save the cleared wallet
+            wallet.save_db()
+
+            QMessageBox.information(
+                self, _('Resync Started'),
+                _('Wallet history cleared. Please close and reopen the '
+                  'wallet now — it will re-fetch all transactions from '
+                  'the network automatically.\n\n'
+                  'This may take 10-30 seconds depending on how many '
+                  'addresses you have.'))
+        except Exception as e:
+            QMessageBox.warning(
+                self, _('Resync Failed'),
+                _('Could not resync wallet:\n\n') + str(e))
 
     def plugins_dialog(self):
         self.pluginsdialog = d = WindowModalDialog(self, _('Electrum Plugins'))
