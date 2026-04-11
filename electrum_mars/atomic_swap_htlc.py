@@ -43,13 +43,14 @@ _logger = get_logger(__name__)
 # - Taker funds BTC second  -> BTC locktime must be LOWER
 # - Maker funds MARS first  -> MARS locktime must be HIGHER
 #
-# We keep the absolute values low (4h BTC / 6h MARS) so users don't
-# have to wait days to recover funds from a stalled swap. The 2-hour
-# gap is adequate under normal Bitcoin conditions but tight during
-# extreme fee congestion — a future version may tune these based on
-# observed real-world reliability.
+# 4h BTC / 8h MARS gives a 4-hour safety gap between the two refund
+# windows. This is generous enough to tolerate Bitcoin mempool
+# congestion during fee spikes (the maker's claim tx has ~4 hours
+# after their theoretical worst-case broadcast time to confirm)
+# while keeping the taker's recovery window short (4 hours) so a
+# stalled swap feels tolerable rather than catastrophic.
 BTC_TIMELOCK_BLOCKS = 24     # ~4 hours at 10 min/block
-MARS_TIMELOCK_BLOCKS = 175   # ~6 hours at 123 sec/block
+MARS_TIMELOCK_BLOCKS = 234   # ~8 hours at 123 sec/block
 
 # Bitcoin bech32 HRPs
 BTC_SEGWIT_HRP = "bc"

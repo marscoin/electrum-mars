@@ -219,7 +219,7 @@ Defined in `atomic_swap_htlc.py`:
 
 ```python
 BTC_TIMELOCK_BLOCKS  = 24    # ~4 hours at 10 min/block
-MARS_TIMELOCK_BLOCKS = 175   # ~6 hours at 123 sec/block
+MARS_TIMELOCK_BLOCKS = 234   # ~8 hours at 123 sec/block
 ```
 
 ### The safety rule
@@ -240,23 +240,25 @@ and construct a MARS claim. The taker would lose BTC and not gain MARS.
 
 ### The gap
 
-With `BTC = 4h` and `MARS = 6h`, the gap is **2 hours**. This is a
-deliberate trade-off between user experience and safety margin:
+With `BTC = 4h` and `MARS = 8h`, the gap is **4 hours**. This is a
+deliberate sweet-spot between user experience and safety margin:
 
-- **User experience**: A user with a stalled swap gets their BTC back in
-  4 hours instead of 24. That's the difference between "annoying" and
-  "catastrophic".
-- **Safety margin**: 2 hours is adequate under normal Bitcoin conditions.
-  A claim tx at typical `halfHourFee` rates will confirm well under an
-  hour even during moderate congestion.
-- **Risk zone**: During extreme fee spikes (e.g. mempool bidding wars)
-  a claim tx might take longer than 2 hours to confirm, creating a
-  narrow window where a malicious maker could race. This is possible
-  but unlikely, and the Marscoin community today is not a hostile
-  environment.
+- **User experience**: A user with a stalled swap recovers their BTC in
+  4 hours — annoying but not catastrophic. Worst case recovery (both
+  sides) is 8 hours, all within a single day.
+- **Safety margin**: 4 hours is comfortable under all normal Bitcoin
+  conditions. Even during moderate fee congestion, a claim tx at
+  `halfHourFee` rates will confirm well within an hour; the maker has
+  multiple hours of additional buffer before the MARS refund becomes
+  possible.
+- **Tolerable under fee spikes**: Even if BTC fees surge and a claim tx
+  takes an unusually long time to confirm, the 4-hour gap provides
+  substantial headroom before the maker could theoretically race the
+  taker's preimage extraction.
 
-A future version may increase these values based on real-world data,
-or implement dynamic timelocks that grow during fee spikes.
+A future version may implement dynamic timelocks that adjust based on
+observed fee conditions, but for a human-scale P2P swap network the
+static 4h/8h values are a practical sweet spot.
 
 ### What "refundable" means on each chain
 
@@ -537,7 +539,7 @@ Refunds are only needed when the happy path fails. In practice:
 - **Taker sent BTC but maker never claimed** → taker refunds BTC after
   `BTC_TIMELOCK_BLOCKS` (4 hours)
 - **Maker locked MARS but taker never sent BTC** → maker refunds MARS
-  after `MARS_TIMELOCK_BLOCKS` (6 hours)
+  after `MARS_TIMELOCK_BLOCKS` (8 hours)
 
 ### How the taker refunds BTC
 
