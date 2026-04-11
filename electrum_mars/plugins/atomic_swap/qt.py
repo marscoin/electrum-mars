@@ -258,21 +258,69 @@ class AtomicSwapTab(QWidget):
                 self.window.network.run_from_another_thread(coro)
             except Exception:
                 pass  # ElectrumX may not support atomicswap yet
+
+        # Build set of my own offer IDs and pubkeys from local DB
+        my_swaps = self.engine.get_all_swaps()
+        my_pubkeys = {s.my_pubkey for s in my_swaps if s.my_pubkey}
+        my_offer_ids = {s.swap_id for s in my_swaps
+                        if s.role == SwapRole.MAKER.value}
+
         offers = self.orderbook.get_offers()
-        self.offers_table.setRowCount(len(offers))
-        for i, offer in enumerate(offers):
+        # Don't filter — show all, but mark mine differently
+        all_offers = list(self.orderbook._offers.values())
+        all_offers = [o for o in all_offers if not o.is_expired()]
+        all_offers.sort(key=lambda o: o.rate)
+
+        self.offers_table.setRowCount(len(all_offers))
+        for i, offer in enumerate(all_offers):
+            is_mine = (offer.maker_pubkey in my_pubkeys or
+                       offer.offer_id in my_offer_ids)
+
             self.offers_table.setItem(i, 0, QTableWidgetItem(
                 f'{offer.mars_amount:.4f}'))
             self.offers_table.setItem(i, 1, QTableWidgetItem(
                 f'{offer.btc_amount:.8f}'))
             self.offers_table.setItem(i, 2, QTableWidgetItem(
                 f'{offer.rate:.8f}'))
-            self.offers_table.setItem(i, 3, QTableWidgetItem(
-                offer.maker_address[:12] + '...' if offer.maker_address else '?'))
+            maker_display = offer.maker_address[:12] + '...' if offer.maker_address else '?'
+            if is_mine:
+                maker_display = 'YOU (' + maker_display + ')'
+            maker_item = QTableWidgetItem(maker_display)
+            if is_mine:
+                from PyQt5.QtGui import QColor
+                maker_item.setForeground(QColor('#c0392b'))
+            self.offers_table.setItem(i, 3, maker_item)
 
-            accept_btn = QPushButton(_('Accept'))
-            accept_btn.clicked.connect(lambda _, o=offer: self._accept_offer(o))
-            self.offers_table.setCellWidget(i, 4, accept_btn)
+            if is_mine:
+                cancel_btn = QPushButton('Cancel')
+                cancel_btn.setStyleSheet("color: #c0392b;")
+                cancel_btn.clicked.connect(
+                    lambda _, oid=offer.offer_id: self._cancel_offer_by_id(oid))
+                self.offers_table.setCellWidget(i, 4, cancel_btn)
+            else:
+                accept_btn = QPushButton('Accept')
+                accept_btn.clicked.connect(lambda _, o=offer: self._accept_offer(o))
+                self.offers_table.setCellWidget(i, 4, accept_btn)
+
+    def _cancel_offer_by_id(self, offer_id: str):
+        """Cancel an offer by ID (from the offers table)."""
+        # Find and cancel the corresponding swap
+        swap = self.engine.get_swap(offer_id)
+        if swap:
+            self._cancel_swap(swap)
+        else:
+            # Just remove from orderbook
+            self.orderbook.remove_offer(offer_id)
+            if self.engine.network:
+                try:
+                    interface = self.engine.network.interface
+                    if interface:
+                        coro = interface.session.send_request(
+                            'atomicswap.cancel_offer', [offer_id])
+                        self.engine.network.run_from_another_thread(coro)
+                except Exception:
+                    pass
+            self._refresh_all()
 
     def _refresh_active(self):
         swaps = self.engine.get_active_swaps()
