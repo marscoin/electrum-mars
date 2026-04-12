@@ -253,6 +253,7 @@ def create_claim_tx(
     claim_privkey: bytes,
     destination_address: str,
     fee_sat: int = 300,
+    destination_is_btc: bool = False,
 ) -> PartialTransaction:
     """Create a transaction that claims an HTLC by revealing the preimage.
 
@@ -267,6 +268,9 @@ def create_claim_tx(
         claim_privkey: private key of the recipient (matching recipient_pubkey in script)
         destination_address: where to send the claimed funds
         fee_sat: transaction fee in satoshis
+        destination_is_btc: if True, treat destination as a real Bitcoin
+            address (bypasses Electrum's Marscoin-aware address validator).
+            Required when the maker claims BTC to their own bc1/1/3 address.
 
     Returns:
         Signed transaction ready to broadcast
@@ -282,7 +286,14 @@ def create_claim_tx(
 
     # Create output
     claim_amount = funding_amount_sat - fee_sat
-    txout = PartialTxOutput.from_address_and_value(destination_address, claim_amount)
+    if destination_is_btc:
+        # Bypass the Marscoin-aware validator: build scriptPubKey manually.
+        script_bytes = btc_address_to_scriptpubkey(destination_address)
+        from .transaction import TxOutput
+        raw_txout = TxOutput(scriptpubkey=script_bytes, value=claim_amount)
+        txout = PartialTxOutput.from_txout(raw_txout)
+    else:
+        txout = PartialTxOutput.from_address_and_value(destination_address, claim_amount)
 
     # Build transaction (version 2 for CLTV compatibility)
     tx = PartialTransaction.from_io([txin], [txout], version=2)

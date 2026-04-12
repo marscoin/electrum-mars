@@ -405,6 +405,7 @@ class SwapEngine:
             claim_privkey=bfh(swap.my_privkey),
             destination_address=btc_destination,
             fee_sat=int(fee_sat),
+            destination_is_btc=True,
         )
 
         # Broadcast via mempool.space
