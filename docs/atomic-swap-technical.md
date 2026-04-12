@@ -2,7 +2,7 @@
 
 **Status:** Implemented, live on mainnet
 **Version:** 4.3.2.0+mars
-**Last updated:** 2026-04-11
+**Last updated:** 2026-04-12
 
 This is the authoritative technical document describing the Bitcoin↔Marscoin
 atomic swap system built into Electrum-Mars. It describes how the system
@@ -30,9 +30,13 @@ The goal of this document is to give a developer enough understanding to:
 7. [The swap worker](#the-swap-worker)
 8. [Auto-Maker](#auto-maker)
 9. [Refund paths](#refund-paths)
-10. [Threat model](#threat-model)
-11. [Known limitations](#known-limitations)
-12. [File map](#file-map)
+10. [Bitcoin address handling](#bitcoin-address-handling)
+11. [Code path verification audit](#code-path-verification-audit)
+12. [Bug log](#bug-log)
+13. [Mainnet test log](#mainnet-test-log)
+14. [Threat model](#threat-model)
+15. [Known limitations](#known-limitations)
+16. [File map](#file-map)
 
 ---
 
@@ -409,10 +413,17 @@ The maker's `SwapWorker` polls `atomicswap.get_acceptance(offer_id)` every
 30 seconds. When an acceptance appears, it:
 
 1. Calls `engine.set_peer_info(swap_id, taker_pubkey)` which rebuilds the
-   MARS HTLC script and derives the new address
-2. Calls `engine.fund_mars_htlc(swap_id, password)` which signs and
+   MARS HTLC script and derives the `mars_htlc_address`
+2. Extracts `btc_htlc_address` and `btc_locktime` from the acceptance
+3. Independently recomputes the BTC HTLC script using the known
+   `(payment_hash160, maker_pubkey, taker_pubkey, btc_locktime)` and
+   verifies the computed P2WSH address matches the taker's claimed address.
+   This prevents a malicious taker from sending a fabricated address.
+4. Stores `btc_htlc_script`, `btc_htlc_address`, `btc_locktime` on the
+   maker's `SwapData`
+5. Calls `engine.fund_mars_htlc(swap_id, password)` which signs and
    broadcasts the MARS funding tx
-3. Advances state to `MARS_LOCKED`
+6. Advances state to `MARS_LOCKED`
 
 ### Gossip and fan-out
 
@@ -468,9 +479,16 @@ async def _tick(self):
 ### Maker state transitions
 
 - `CREATED` + no `peer_pubkey`: poll `atomicswap.get_acceptance`. If
-  acceptance exists, call `set_peer_info`, then `fund_mars_htlc`.
+  acceptance exists:
+  1. Call `set_peer_info(taker_pubkey)` which builds the MARS HTLC script
+  2. Extract `btc_htlc_address` + `btc_locktime` from acceptance
+  3. **Verify**: recompute the BTC HTLC script from `(payment_hash160,
+     maker_pubkey, taker_pubkey, btc_locktime)` and confirm the computed
+     P2WSH address matches the taker's claimed address — reject if mismatch
+  4. Store `btc_htlc_script`, `btc_htlc_address`, `btc_locktime` on swap
+  5. Call `fund_mars_htlc()` to sign and broadcast the MARS funding tx
 - `MARS_LOCKED`: poll mempool.space for BTC HTLC funding. If found, update
-  state to `BTC_LOCKED`.
+  state to `BTC_LOCKED`. Guards against `btc_htlc_address` being `None`.
 - `BTC_LOCKED`: call `claim_btc` — this builds the claim tx, broadcasts
   via mempool.space, and advances state to `BTC_CLAIMED`.
 
@@ -576,6 +594,290 @@ button that fetches current height and displays blocks remaining.
 
 ---
 
+## Bitcoin address handling
+
+Electrum-Mars is a Marscoin wallet. Its internal address-handling functions
+(`address_to_script()`, `PartialTxOutput.from_address_and_value()`, etc.)
+default to `constants.net`, which sets `SEGWIT_HRP="mrs"`. This means real
+Bitcoin addresses (`bc1...`, `1...`, `3...`) fail Electrum's address
+validation — they are treated as "invalid addresses" because they don't
+match the Marscoin network prefix.
+
+This is a fundamental architectural tension: the wallet lives in Marscoin
+space but needs to construct transactions for the Bitcoin chain.
+
+### Solution: `btc_address_to_scriptpubkey()`
+
+`atomic_swap_htlc.py` provides `btc_address_to_scriptpubkey(address)` which
+manually builds a `scriptPubKey` from a raw Bitcoin address without touching
+Electrum's address validator.
+
+Supported address formats:
+
+| Format | Prefix | scriptPubKey template |
+|---|---|---|
+| P2WPKH (bech32) | `bc1q...` (20-byte program) | `OP_0 <20 bytes>` |
+| P2WSH (bech32) | `bc1q...` (32-byte program) | `OP_0 <32 bytes>` |
+| P2TR (bech32m) | `bc1p...` | `OP_1 <32 bytes>` |
+| P2PKH (legacy) | `1...` | `OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG` |
+| P2SH (legacy) | `3...` | `OP_HASH160 <20> OP_EQUAL` |
+| Testnet bech32 | `tb1...` | same as mainnet, different HRP |
+| Regtest bech32 | `bcrt1...` | same as mainnet, different HRP |
+
+The helper performs bech32/bech32m decoding via `segwit_addr.decode_segwit_address()`
+for segwit, and a minimal base58check decoder for legacy formats. Checksums
+are verified in both cases.
+
+### Where `destination_is_btc=True` is required
+
+Both `create_claim_tx()` and `create_refund_tx()` accept a
+`destination_is_btc: bool = False` parameter. When `True`, they use
+`btc_address_to_scriptpubkey()` instead of `from_address_and_value()`.
+
+Callers that MUST pass `destination_is_btc=True`:
+
+| Function | Called from | Why |
+|---|---|---|
+| `create_claim_tx()` | `swap_engine.claim_btc()` | Maker claims BTC to their `bc1...` address |
+| `create_refund_tx()` | `swap_engine.refund_btc_htlc()` | Taker refunds BTC to their `bc1...` address |
+
+Callers that MUST NOT pass `True`:
+
+| Function | Called from | Why |
+|---|---|---|
+| `create_claim_tx()` | `swap_worker._claim_mars_now()` | Taker claims MARS to their `mrs1q...` address — Electrum's validator is correct here |
+| `create_refund_tx()` | `swap_engine.refund_mars_htlc()` | Maker refunds MARS to their `mrs1q...` address — same |
+
+### UI validation
+
+The BTC refund dialog (`BtcRefundDialog` in `qt.py`) validates prefix only
+— it checks `bc1`, `1`, or `3` prefix before passing to the engine. The
+actual address decoding and checksum verification happen inside
+`btc_address_to_scriptpubkey()`.
+
+---
+
+## Code path verification audit
+
+Full audit of every step in the swap flow, performed 2026-04-12.
+Every path listed below is backed by real code — no stubs, no placeholders.
+
+### Cryptographic primitives
+
+| Step | Function | Location | Implementation |
+|---|---|---|---|
+| Preimage generation | `generate_preimage()` | `atomic_swap_htlc.py:83-91` | `os.urandom(32)` → `hash_160()` (SHA256 + RIPEMD160) |
+| Ephemeral keypair | `generate_keypair()` | `atomic_swap_htlc.py:94-102` | `ECPrivkey(os.urandom(32))` → compressed 33-byte pubkey |
+| HTLC script construction | `create_htlc_script()` | `atomic_swap_htlc.py:105-141` | `construct_script()` with OP_IF/HASH160/CLTV/CHECKSIG |
+| P2WSH address | `htlc_to_p2wsh_address()` | `atomic_swap_htlc.py:144-164` | SHA256(script) → `segwit_addr.encode_segwit_address(hrp, 0, hash)` |
+| Script verification | `verify_htlc_script()` | `atomic_swap_htlc.py:167-214` | Template matching + field-by-field comparison + full script rebuild |
+| Preimage extraction | `extract_preimage_from_witness()` | `atomic_swap_htlc.py:440-474` | Parse witness items, find 32-byte entry whose `hash_160()` appears in script |
+| Witness parsing | `_parse_witness()` | `atomic_swap_htlc.py:477-499` | Manual varint-aware deserialization of witness stack |
+
+### Transaction construction
+
+| Step | Function | Location | Implementation |
+|---|---|---|---|
+| MARS funding tx | `create_funding_tx()` | `atomic_swap_htlc.py:217-245` | `wallet.make_unsigned_transaction()` → `wallet.sign_transaction()` |
+| BTC claim tx (maker) | `create_claim_tx()` | `atomic_swap_htlc.py:247-307` | Witness: `[sig, preimage, OP_TRUE, witness_script]` |
+| BTC refund tx (taker) | `create_refund_tx()` | `atomic_swap_htlc.py:376-437` | Witness: `[sig, OP_FALSE, witness_script]`, `nLockTime=locktime`, `nSequence=0xfffffffe` |
+| BTC address → scriptPubKey | `btc_address_to_scriptpubkey()` | `atomic_swap_htlc.py:299-362` | Manual bech32/base58 decode, bypasses Electrum's Marscoin validator |
+
+### Chain monitoring (mempool.space REST API)
+
+| Step | Function | Location | Implementation |
+|---|---|---|---|
+| Check HTLC funded | `check_htlc_funded()` | `btc_monitor.py:98-148` | `GET /address/{addr}/utxo`, checks amount + confirmations |
+| Wait for funding | `wait_for_htlc_funding()` | `btc_monitor.py:150-177` | Polling loop with configurable interval and timeout |
+| Wait for preimage | `wait_for_preimage_reveal()` | `btc_monitor.py:179-213` | Scans spending txs of HTLC address, extracts witness |
+| Get block height | `get_block_height()` | `btc_monitor.py:93-96` | `GET /blocks/tip/height` |
+| Get fee rate | `get_fee_rate()` | `btc_monitor.py:215-220` | `GET /v1/fees/recommended` → `halfHourFee` |
+| Broadcast tx | `broadcast_tx()` | `btc_monitor.py:222-241` | `POST /api/tx` with raw hex body |
+| Get address txs | `get_address_txs()` | `btc_monitor.py:80-83` | `GET /address/{addr}/txs` |
+| Get raw tx hex | `get_tx_hex()` | `btc_monitor.py:89-91` | `GET /tx/{txid}/hex` |
+
+### State machine (SwapEngine)
+
+| Step | Function | Location | Implementation |
+|---|---|---|---|
+| Create maker swap | `create_maker_swap()` | `swap_engine.py:209-245` | Generates preimage, keypair, computes MARS locktime, stores to SQLite |
+| Create taker swap | `create_taker_swap()` | `swap_engine.py:247-299` | Generates keypair, builds BTC HTLC script/address, stores to SQLite |
+| Set peer info (maker) | `set_peer_info()` | `swap_engine.py:301-322` | Builds MARS HTLC script/address using both pubkeys |
+| Fund MARS HTLC | `fund_mars_htlc()` | `swap_engine.py:324-352` | `create_funding_tx()` → `network.broadcast_transaction()` → `MARS_LOCKED` |
+| Monitor BTC HTLC | `monitor_btc_htlc()` | `swap_engine.py:354-374` | `btc_monitor.wait_for_htlc_funding()` → `BTC_LOCKED` |
+| Claim BTC (maker) | `claim_btc()` | `swap_engine.py:376-423` | `create_claim_tx(destination_is_btc=True)` → `btc_monitor.broadcast_tx()` → `BTC_CLAIMED` |
+| Wait + claim MARS (taker) | `wait_for_preimage_and_claim_mars()` | `swap_engine.py:425-464` | `btc_monitor.wait_for_preimage_reveal()` → `create_claim_tx()` → `network.broadcast_transaction()` → `COMPLETED` |
+| Refund MARS (maker) | `refund_mars_htlc()` | `swap_engine.py:466-489` | `create_refund_tx()` → `network.broadcast_transaction()` → `MARS_REFUNDED` |
+| Refund BTC (taker) | `refund_btc_htlc()` | `swap_engine.py:491-573` | `create_refund_tx(destination_is_btc=True)` → `btc_monitor.broadcast_tx()` → `BTC_REFUNDED` |
+
+### Background worker (SwapWorker)
+
+| Step | Function | Location | Implementation |
+|---|---|---|---|
+| Start/stop lifecycle | `start()` / `stop()` | `swap_worker.py:59-74` | `asyncio.get_event_loop().create_task()`, cancels on stop |
+| Tick loop | `_run_loop()` → `_tick()` | `swap_worker.py:76-110` | Iterates `get_active_swaps()`, dispatches by role |
+| Maker: poll for acceptance | `_check_for_acceptance()` | `swap_worker.py:253-265` | `atomicswap.get_acceptance(offer_id)` via ElectrumX |
+| Maker: verify + store BTC HTLC | `_advance_maker()` lines 155-178 | `swap_worker.py:155-178` | Recomputes BTC HTLC from known params, verifies against taker's address |
+| Maker: auto-fund MARS | `_advance_maker()` lines 182-191 | `swap_worker.py:182-191` | Calls `engine.fund_mars_htlc()` with wallet password |
+| Maker: detect BTC funding | `_advance_maker()` MARS_LOCKED | `swap_worker.py:193-210` | `btc_monitor.check_htlc_funded()` with min_confirmations=1 |
+| Maker: auto-claim BTC | `_advance_maker()` BTC_LOCKED | `swap_worker.py:212-220` | Calls `engine.claim_btc()` → broadcasts via mempool.space |
+| Taker: detect own BTC | `_advance_taker()` CREATED | `swap_worker.py:225-241` | `btc_monitor.check_htlc_funded()` with min_confirmations=0 |
+| Taker: extract preimage | `_check_for_preimage()` | `swap_worker.py:267-288` | Scans BTC HTLC address spending txs for witness with 32-byte preimage |
+| Taker: auto-claim MARS | `_claim_mars_now()` | `swap_worker.py:290-327` | Queries MARS chain for HTLC UTXO → `create_claim_tx()` → `network.broadcast_transaction()` |
+| Taker: find MARS funding | `_find_mars_htlc_funding()` | `swap_worker.py:329-350` | `blockchain.scripthash.listunspent` on MARS HTLC address |
+| Expiry detection | `_is_expired()` | `swap_worker.py:112-119` | Wall-clock `age > 8h` (see Known Limitations #9) |
+| Auto-refund on expiry | `_handle_expired()` | `swap_worker.py:121-134` | Calls `engine.refund_mars_htlc()` for makers with funded MARS |
+
+### Order book protocol
+
+| Step | Function | Location | Implementation |
+|---|---|---|---|
+| Publish to all servers | `publish_to_electrumx()` | `orderbook.py:224-260` | `asyncio.gather()` across all `network.interfaces` |
+| Fetch from all servers | `fetch_from_electrumx()` | `orderbook.py:144-222` | Parallel query + merge + prune stale local offers |
+| Offer expiry | `_cleanup_expired()` | `orderbook.py:125-130` | Removes offers past `expires_at` |
+| Server-side gossip | `_gossip_offer_to_peers()` | ElectrumX `session.py` | Forwards to `PeerManager._get_recent_good_peers()` with `_gossip=False` |
+
+### Plugin integration
+
+| Step | Function | Location | Implementation |
+|---|---|---|---|
+| Plugin load | `load_wallet()` | `qt.py:50-82` | Creates `SwapEngine`, `OrderBook`, `SwapWorker`, starts worker |
+| Plugin unload | `on_close_window()` | `qt.py:88-93` | Stops worker |
+| Tab creation | `AtomicSwapTab.__init__()` | `qt.py:95+` | Buy/Sell/My Offers toolbar, offers table, active swaps table |
+| Accept offer | `_accept_offer()` | `qt.py:585-648` | Creates taker swap, sends acceptance to ElectrumX, shows BTC payment dialog |
+| Create offer | `CreateOfferDialog.accept()` | `qt.py:830-947` | Validates inputs, creates maker swap, publishes offer |
+| BTC payment QR | `BtcPaymentDialog` | `qt.py` | Shows HTLC address as QR + copyable text, polls mempool.space for confirmation |
+| BTC refund dialog | `BtcRefundDialog` | `qt.py` | Check Timelock + Broadcast Refund buttons, validates bc1/1/3 prefix |
+
+---
+
+## Bug log
+
+Bugs discovered and fixed during development and mainnet testing.
+Organized chronologically with commit references.
+
+### BUG-001: Maker had no BTC receive address (2026-04-10)
+
+**Commit:** `b110a9814`
+**Severity:** Critical — maker's claim tx would send BTC to the HTLC address itself (nonsensical)
+
+**Root cause:** The `claim_btc()` function had a placeholder destination.
+There was no UI field for the maker to specify where to receive BTC, and no
+`btc_receive_address` field on `SwapData`.
+
+**Fix:** Added required "BTC receive address" field to Create Offer dialog
+and Auto-Maker dialog. Stored in `SwapData.btc_receive_address`. `claim_btc()`
+raises if missing. Validated prefix (`bc1`/`1`/`3`). Saved between uses in
+wallet config.
+
+### BUG-002: BTC refund rejected real Bitcoin bc1 addresses (2026-04-11)
+
+**Commit:** `a0b56b214`
+**Severity:** Critical — taker could not refund BTC
+
+**Root cause:** `create_refund_tx()` called
+`PartialTxOutput.from_address_and_value(btc_addr, ...)` which internally calls
+`address_to_script()` in `bitcoin.py`. This validates against
+`constants.net` which defaults to Marscoin (`SEGWIT_HRP="mrs"`). Real
+Bitcoin `bc1...` addresses fail the bech32 HRP check and raise "invalid
+bitcoin address".
+
+**Symptom:** User entered a valid Exodus wallet address
+`bc1qxtts9kqcd22ck5upvrhz9zs3geaufp66my95e6` in the refund dialog and got
+"invalid bitcoin address" error.
+
+**Fix:** Added `btc_address_to_scriptpubkey()` helper that manually builds
+the scriptPubKey for real Bitcoin addresses without going through Electrum's
+Marscoin-aware address validator. Added `destination_is_btc: bool = False`
+parameter to `create_refund_tx()`. Engine passes `True` for BTC-side
+refunds.
+
+**Proven on mainnet:** Taker successfully refunded 0.00004392 BTC from HTLC
+`bc1q0wja8cwf9q84expekd2r0kzk84gfjf5nktmqecutwt68zrg36vsqgz3hee`
+to Exodus wallet address. Confirmed on Bitcoin blockchain.
+
+### BUG-003: BTC claim also rejected real Bitcoin bc1 addresses (2026-04-11)
+
+**Commit:** `45f1d819d`
+**Severity:** Critical — maker could not claim BTC
+
+**Root cause:** Same as BUG-002, but in `create_claim_tx()` instead of
+`create_refund_tx()`. The claim path calls
+`from_address_and_value(btc_receive_address, ...)` which hits the same
+Marscoin validator.
+
+**Symptom:** Not hit in testing yet (no successful swap had reached the
+BTC_LOCKED state), but would have crashed on the first successful swap.
+
+**Fix:** Same pattern: added `destination_is_btc=True` parameter to
+`create_claim_tx()`. Engine passes `True` in `claim_btc()`.
+
+### BUG-004: Maker never stored BTC HTLC address from acceptance (2026-04-12)
+
+**Commit:** `08a3e9104`
+**Severity:** Critical — swap could never progress past MARS_LOCKED
+
+**Root cause:** When a taker accepts an offer, they compute the BTC HTLC
+and send `btc_htlc_address` + `btc_locktime` in the acceptance dict to
+ElectrumX. The maker's `SwapWorker._advance_maker()` polled this acceptance
+and called `set_peer_info()` — but `set_peer_info()` only built the MARS
+HTLC. It never stored the BTC HTLC info on the maker's `SwapData`.
+
+When the swap advanced to `MARS_LOCKED`, the worker called
+`btc_monitor.check_htlc_funded(swap.btc_htlc_address, ...)` where
+`swap.btc_htlc_address` was `None`. The worker would either crash or poll
+forever.
+
+**Fix:** After `set_peer_info()`, the worker now:
+1. Extracts `btc_htlc_address` and `btc_locktime` from the acceptance
+2. Independently recomputes the BTC HTLC script using the known pubkeys and
+   payment hash — verifies the computed address matches the taker's claim
+3. Stores `btc_htlc_script`, `btc_htlc_address`, `btc_locktime` on the swap
+4. Added a guard on the `MARS_LOCKED` state that logs and returns if
+   `btc_htlc_address` is still missing
+
+The verification step is important: it prevents a malicious taker from
+sending a fabricated BTC HTLC address that doesn't match the agreed HTLC
+parameters.
+
+---
+
+## Mainnet test log
+
+### Test 1: BTC refund path (2026-04-11)
+
+**Purpose:** Verify that a taker can recover BTC from a stalled swap.
+
+**Setup:**
+- Maker posted an offer for 100 MARS at 0.0000004145 BTC/MARS
+- Taker (user on second machine) accepted the offer
+- Taker sent 0.00004392 BTC to the generated HTLC address
+
+**BTC HTLC:**
+- Address: `bc1q0wja8cwf9q84expekd2r0kzk84gfjf5nktmqecutwt68zrg36vsqgz3hee`
+- Funding txid: `be716dde2fb75b2d4abe5a495c32c8fe0ed72353ab444d72a783b298b02558bc`
+- Confirmed at block: 944596
+- Locktime: 850036
+
+**Issue encountered:** When attempting refund, user entered their Exodus
+wallet `bc1qxtts9kqcd22ck5upvrhz9zs3geaufp66my95e6` and got "invalid
+bitcoin address" (BUG-002 above).
+
+**Resolution:** Fixed the Marscoin address validator issue. Rebuilt .app,
+retried refund.
+
+**Result:** Refund broadcast successful. BTC appeared as "receiving" in
+Exodus wallet. Confirmed on Bitcoin blockchain (2026-04-12).
+
+**What was proven:**
+- HTLC construction produces valid P2WSH scripts accepted by Bitcoin nodes
+- CLTV refund path works with real Bitcoin consensus rules
+- Witness construction `[sig, OP_FALSE, witness_script]` is correct
+- mempool.space broadcast API works for real mainnet txs
+- The entire refund safety net is functional with real money
+
+---
+
 ## Threat model
 
 ### What atomic swaps guarantee
@@ -604,7 +906,7 @@ button that fetches current height and displays blocks remaining.
   watching both chains can correlate.
 - **Fee bidding wars**: If BTC fees spike during a swap, the maker's
   claim tx might not confirm before the MARS refund becomes available. The
-  16-hour gap is the margin of safety.
+  4-hour gap is the margin of safety.
 
 ### Concurrent acceptance of the same offer
 
@@ -652,6 +954,36 @@ your own Bitcoin node.
 8. **ElectrumX extension is optional but required for discovery**:
    Without a patched ElectrumX server, clients must exchange offers
    manually via JSON. The Manual Exchange tab supports this.
+
+9. **Wall-clock swap expiry**: `SwapWorker._is_expired()` uses wall-clock
+   time (`age > 8 hours`) rather than comparing block heights. This means
+   a swap that sits unaccepted for 7 hours and is then taken will have
+   only ~1 hour of worker time before auto-expiry kills it. The correct
+   approach would be to compare the current block height against the
+   swap's locktime, but this requires a network call on every tick. For
+   the current human-scale swap volume this is an acceptable trade-off.
+
+10. **Acceptance overwrite**: `atomicswap.accept_offer` on ElectrumX
+    stores the acceptance in a dict keyed by `offer_id`. If two takers
+    accept the same offer, the second overwrites the first. The first
+    taker may have already funded BTC to a now-orphaned HTLC. Both
+    takers can refund after their respective timelocks, but neither swap
+    completes. A future version should implement first-valid-wins
+    semantics or an offer reservation protocol.
+
+11. **No acceptance release**: When a swap fails (refunded, expired,
+    cancelled), neither party sends a "release" message to the ElectrumX
+    relay. The stale acceptance lingers until the server restarts. The
+    offer itself may also remain listed until its `expires_at` timestamp
+    passes. A clean design would have refund/cancel paths call
+    `atomicswap.cancel_offer` and a new `atomicswap.release_acceptance`.
+
+12. **Griefing via acceptance**: An attacker can accept any offer with a
+    garbage pubkey. The maker's wallet auto-funds a MARS HTLC to that
+    pubkey. The attacker never funds BTC (they never intended to). The
+    maker's MARS is frozen for 8 hours until the refund locktime. Cost
+    to attacker: zero. Mitigation: require user confirmation before
+    auto-funding MARS HTLC (currently the worker auto-funds immediately).
 
 ---
 
