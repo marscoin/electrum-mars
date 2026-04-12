@@ -151,6 +151,37 @@ class SwapWorker:
                     f"Maker {swap.swap_id[:8]}: taker accepted, "
                     f"peer_pubkey={acceptance['taker_pubkey'][:16]}...")
 
+                # The taker also computed the BTC HTLC and sent us
+                # the address + locktime. We need to independently
+                # verify and store them so we can monitor and claim.
+                btc_htlc_addr = acceptance.get('btc_htlc_address')
+                btc_locktime = acceptance.get('btc_locktime')
+                if btc_htlc_addr and btc_locktime:
+                    # Verify: recompute the BTC HTLC from known params
+                    from electrum_mars.atomic_swap_htlc import (
+                        create_htlc_script, htlc_to_p2wsh_address, Chain)
+                    from electrum_mars.util import bfh
+                    btc_script = create_htlc_script(
+                        payment_hash160=bfh(swap.payment_hash160),
+                        recipient_pubkey=bfh(swap.my_pubkey),    # maker claims BTC
+                        sender_pubkey=bfh(swap.peer_pubkey),     # taker refunds
+                        locktime=btc_locktime,
+                    )
+                    computed_addr = htlc_to_p2wsh_address(btc_script, Chain.BTC)
+                    if computed_addr != btc_htlc_addr:
+                        _logger.error(
+                            f"Maker {swap.swap_id[:8]}: BTC HTLC address "
+                            f"mismatch! taker={btc_htlc_addr}, "
+                            f"computed={computed_addr} — possible attack")
+                        return
+                    swap.btc_htlc_script = btc_script.hex()
+                    swap.btc_htlc_address = btc_htlc_addr
+                    swap.btc_locktime = btc_locktime
+                    self.engine.db.save(swap)
+                    _logger.info(
+                        f"Maker {swap.swap_id[:8]}: verified BTC HTLC "
+                        f"addr={btc_htlc_addr[:20]}...")
+
             if not swap.mars_htlc_address:
                 return
 
@@ -167,8 +198,10 @@ class SwapWorker:
 
         elif state == SwapState.MARS_LOCKED.value:
             # MARS is locked, wait for the taker to fund the BTC HTLC
-            # monitor_btc_htlc polls mempool.space — but it can block, so
-            # we do a non-blocking check instead.
+            if not swap.btc_htlc_address:
+                _logger.debug(
+                    f"Maker {swap.swap_id[:8]}: no BTC HTLC address yet")
+                return
             result = await self.engine.btc_monitor.check_htlc_funded(
                 swap.btc_htlc_address,
                 swap.btc_amount_sat,
