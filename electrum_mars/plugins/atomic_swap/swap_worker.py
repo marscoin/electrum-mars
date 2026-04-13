@@ -90,6 +90,7 @@ class SwapWorker:
         if not active:
             return
 
+        print(f"[SwapWorker] tick: {len(active)} active swaps")
         _logger.debug(f"SwapWorker tick: {len(active)} active swaps")
 
         for swap in active:
@@ -113,6 +114,8 @@ class SwapWorker:
                 elif swap.role == SwapRole.TAKER.value:
                     await self._advance_taker(swap)
             except Exception as e:
+                print(f"[SwapWorker] ERROR advancing {swap.swap_id[:8]}: {e}")
+                import traceback; traceback.print_exc()
                 _logger.warning(
                     f"SwapWorker error advancing {swap.swap_id[:8]}: {e}")
 
@@ -257,6 +260,7 @@ class SwapWorker:
 
         elif state == SwapState.BTC_LOCKED.value:
             # Wait for the maker to claim BTC (which reveals preimage).
+            print(f"[SwapWorker] Taker {swap.swap_id[:8]}: checking for preimage...")
             _logger.info(
                 f"Taker {swap.swap_id[:8]}: checking for preimage at "
                 f"{swap.btc_htlc_address}")
@@ -288,6 +292,7 @@ class SwapWorker:
         try:
             txs = await self.engine.btc_monitor.get_address_txs(
                 swap.btc_htlc_address)
+            print(f"[SwapWorker] check_for_preimage: got {len(txs)} txs")
             _logger.info(
                 f"check_for_preimage: got {len(txs)} txs for "
                 f"{swap.btc_htlc_address[:20]}...")
@@ -305,6 +310,7 @@ class SwapWorker:
                         if tx_hex:
                             preimage = extract_preimage_from_witness(tx_hex)
                             if preimage:
+                                print(f"[SwapWorker] PREIMAGE FOUND: {preimage.hex()[:16]}...")
                                 _logger.info(
                                     f"check_for_preimage: PREIMAGE FOUND "
                                     f"{preimage.hex()[:16]}...")
