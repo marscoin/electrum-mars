@@ -366,15 +366,23 @@ class SwapWorker:
         """Query the Marscoin chain for the MARS HTLC funding transaction.
 
         Returns dict with txid and vout, or None if not found.
+        Tries multiple methods because ElectrumX may not have indexed
+        P2WSH (bech32) addresses properly.
         """
+        from electrum_mars import bitcoin
+        network = self.engine.network
+        if network is None or network.interface is None:
+            return None
+
+        sh = bitcoin.address_to_scripthash(swap.mars_htlc_address)
+        print(f"[SwapWorker] _find_mars_htlc_funding: "
+              f"addr={swap.mars_htlc_address[:20]}... sh={sh[:16]}...")
+
+        # Method 1: listunspent
         try:
-            from electrum_mars import bitcoin
-            network = self.engine.network
-            if network is None or network.interface is None:
-                return None
-            sh = bitcoin.address_to_scripthash(swap.mars_htlc_address)
             utxos = await network.interface.session.send_request(
                 'blockchain.scripthash.listunspent', [sh])
+            print(f"[SwapWorker] listunspent returned: {utxos}")
             for utxo in utxos or []:
                 if utxo.get('value', 0) >= swap.mars_amount_sat:
                     return {
@@ -382,7 +390,59 @@ class SwapWorker:
                         'vout': utxo['tx_pos'],
                     }
         except Exception as e:
-            _logger.debug(f"find_mars_htlc_funding: {e}")
+            print(f"[SwapWorker] listunspent error: {e}")
+
+        # Method 2: try scripthash.repair to fix ElectrumX index
+        try:
+            repair_result = await network.interface.session.send_request(
+                'blockchain.scripthash.repair',
+                [sh, swap.mars_htlc_address])
+            print(f"[SwapWorker] repair returned: {repair_result}")
+            if repair_result and isinstance(repair_result, list):
+                for item in repair_result:
+                    txid = item.get('tx_hash')
+                    if txid:
+                        # After repair, retry listunspent
+                        utxos = await network.interface.session.send_request(
+                            'blockchain.scripthash.listunspent', [sh])
+                        print(f"[SwapWorker] listunspent after repair: {utxos}")
+                        for utxo in utxos or []:
+                            if utxo.get('value', 0) >= swap.mars_amount_sat:
+                                return {
+                                    'txid': utxo['tx_hash'],
+                                    'vout': utxo['tx_pos'],
+                                }
+        except Exception as e:
+            print(f"[SwapWorker] repair error: {e}")
+
+        # Method 3: get_history and look for the funding tx
+        try:
+            history = await network.interface.session.send_request(
+                'blockchain.scripthash.get_history', [sh])
+            print(f"[SwapWorker] get_history returned: {history}")
+            for item in history or []:
+                txid = item.get('tx_hash')
+                if txid:
+                    # Get the raw tx to find which output goes to our address
+                    raw = await network.interface.session.send_request(
+                        'blockchain.transaction.get', [txid, True])
+                    if raw and 'vout' in raw:
+                        for vout in raw['vout']:
+                            spk = vout.get('scriptPubKey', {})
+                            addrs = spk.get('addresses', [])
+                            addr = spk.get('address', '')
+                            value_sat = int(vout['value'] * 1e8)
+                            if (swap.mars_htlc_address in addrs
+                                    or addr == swap.mars_htlc_address):
+                                if value_sat >= swap.mars_amount_sat:
+                                    return {
+                                        'txid': txid,
+                                        'vout': vout['n'],
+                                    }
+        except Exception as e:
+            print(f"[SwapWorker] get_history error: {e}")
+
+        print(f"[SwapWorker] _find_mars_htlc_funding: ALL METHODS FAILED")
         return None
 
     def _get_password(self) -> Optional[str]:
