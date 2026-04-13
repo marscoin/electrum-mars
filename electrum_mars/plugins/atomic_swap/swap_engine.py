@@ -154,13 +154,17 @@ class SwapDB:
         return [SwapData(**json.loads(r[0])) for r in rows]
 
     def load_active(self) -> List[SwapData]:
-        """Load all swaps that are not in a terminal state."""
+        """Load all swaps that are not in a terminal state.
+        BTC_CLAIMED is terminal for the maker (they got their BTC,
+        the taker's MARS claim runs independently).
+        """
         terminal = (SwapState.COMPLETED.value, SwapState.FAILED.value,
                      SwapState.EXPIRED.value, SwapState.MARS_REFUNDED.value,
-                     SwapState.BTC_REFUNDED.value)
+                     SwapState.BTC_REFUNDED.value,
+                     SwapState.BTC_CLAIMED.value)
         conn = sqlite3.connect(self.db_path)
         rows = conn.execute(
-            'SELECT data FROM swaps WHERE state NOT IN (?,?,?,?,?)',
+            'SELECT data FROM swaps WHERE state NOT IN (?,?,?,?,?,?)',
             terminal).fetchall()
         conn.close()
         return [SwapData(**json.loads(r[0])) for r in rows]

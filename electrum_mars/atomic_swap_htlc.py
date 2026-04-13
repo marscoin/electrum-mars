@@ -252,7 +252,7 @@ def create_claim_tx(
     preimage: bytes,
     claim_privkey: bytes,
     destination_address: str,
-    fee_sat: int = 300,
+    fee_sat: int = 100000,
     destination_is_btc: bool = False,
 ) -> PartialTransaction:
     """Create a transaction that claims an HTLC by revealing the preimage.
@@ -381,7 +381,7 @@ def create_refund_tx(
     refund_privkey: bytes,
     destination_address: str,
     locktime: int,
-    fee_sat: int = 300,
+    fee_sat: int = 100000,
     destination_is_btc: bool = False,
 ) -> PartialTransaction:
     """Create a transaction that refunds an HTLC after the timelock expires.

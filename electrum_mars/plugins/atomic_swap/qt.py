@@ -408,8 +408,25 @@ class AtomicSwapTab(QWidget):
                 f"{summary['mars_amount']:.4f}"))
             self.active_table.setItem(i, 3, QTableWidgetItem(
                 f"{summary['btc_amount']:.8f}"))
-            self.active_table.setItem(i, 4, QTableWidgetItem(
-                summary['state'].replace('_', ' ').upper()))
+            # Human-readable status labels
+            state = summary['state']
+            role = summary['role']
+            if role == 'maker':
+                status_labels = {
+                    'created': 'Offer posted. Waiting for buyer...',
+                    'mars_locked': 'MARS locked. Waiting for BTC payment...',
+                    'btc_locked': 'BTC received. Claiming...',
+                    'btc_claimed': 'Complete! BTC received.',
+                }
+            else:
+                status_labels = {
+                    'created': 'Waiting for your BTC payment...',
+                    'btc_locked': 'BTC confirmed. Waiting for seller...',
+                    'completed': 'MARS received!',
+                }
+            status_text = status_labels.get(state,
+                state.replace('_', ' ').upper())
+            self.active_table.setItem(i, 4, QTableWidgetItem(status_text))
             # Format age nicely
             age_min = summary['age_minutes']
             if age_min < 60:
@@ -424,6 +441,15 @@ class AtomicSwapTab(QWidget):
                 cancel_btn = QPushButton('Cancel')
                 cancel_btn.clicked.connect(lambda _, s=swap: self._cancel_swap(s))
                 self.active_table.setCellWidget(i, 6, cancel_btn)
+            elif swap.state == SwapState.BTC_CLAIMED.value:
+                # Maker has claimed BTC — swap is effectively complete.
+                # Do NOT show "Refund MARS" — the taker has the preimage
+                # and their claim tx is either mined or in mempool.
+                done_label = QPushButton('\u2713 Done')
+                done_label.setStyleSheet(
+                    "background-color: #27ae60; color: white;")
+                done_label.setEnabled(False)
+                self.active_table.setCellWidget(i, 6, done_label)
             elif (swap.role == SwapRole.TAKER.value
                   and swap.state in (SwapState.CREATED.value,
                                      SwapState.BTC_LOCKED.value)
@@ -438,7 +464,8 @@ class AtomicSwapTab(QWidget):
             elif (swap.role == SwapRole.MAKER.value
                   and swap.state == SwapState.MARS_LOCKED.value
                   and swap.mars_funding_txid):
-                # Maker can refund MARS after timelock
+                # Maker can refund MARS after timelock — but ONLY if
+                # the swap hasn't progressed to BTC_CLAIMED (handled above)
                 refund_btn = QPushButton('Refund MARS')
                 refund_btn.setStyleSheet(
                     "background-color: #e67e22; color: white;")
