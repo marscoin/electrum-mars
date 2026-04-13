@@ -257,7 +257,9 @@ class SwapWorker:
 
         elif state == SwapState.BTC_LOCKED.value:
             # Wait for the maker to claim BTC (which reveals preimage).
-            # Also check the MARS HTLC exists so we know we can claim.
+            _logger.info(
+                f"Taker {swap.swap_id[:8]}: checking for preimage at "
+                f"{swap.btc_htlc_address}")
             preimage = await self._check_for_preimage(swap)
             if preimage:
                 swap.preimage = preimage.hex()
@@ -286,20 +288,33 @@ class SwapWorker:
         try:
             txs = await self.engine.btc_monitor.get_address_txs(
                 swap.btc_htlc_address)
+            _logger.info(
+                f"check_for_preimage: got {len(txs)} txs for "
+                f"{swap.btc_htlc_address[:20]}...")
             for tx_info in txs:
                 # Look for spending transactions (tx spends FROM htlc addr)
                 for vin in tx_info.get('vin', []):
                     prevout = vin.get('prevout', {})
                     if prevout.get('scriptpubkey_address') == swap.btc_htlc_address:
+                        _logger.info(
+                            f"check_for_preimage: found spending tx "
+                            f"{tx_info['txid'][:16]}...")
                         # This tx spends the HTLC — get full tx to extract
                         tx_hex = await self.engine.btc_monitor.get_tx_hex(
                             tx_info['txid'])
                         if tx_hex:
                             preimage = extract_preimage_from_witness(tx_hex)
                             if preimage:
+                                _logger.info(
+                                    f"check_for_preimage: PREIMAGE FOUND "
+                                    f"{preimage.hex()[:16]}...")
                                 return preimage
+                            else:
+                                _logger.warning(
+                                    f"check_for_preimage: spending tx found "
+                                    f"but no preimage extracted")
         except Exception as e:
-            _logger.debug(f"check_for_preimage: {e}")
+            _logger.warning(f"check_for_preimage error: {e}")
         return None
 
     async def _claim_mars_now(self, swap: SwapData, preimage: bytes):
