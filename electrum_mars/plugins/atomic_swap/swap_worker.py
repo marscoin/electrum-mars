@@ -326,19 +326,38 @@ class SwapWorker:
     async def _claim_mars_now(self, swap: SwapData, preimage: bytes):
         """Claim the MARS HTLC using the revealed preimage."""
         from electrum_mars.atomic_swap_htlc import (
-            create_claim_tx, htlc_to_p2wsh_address, Chain)
+            create_claim_tx, create_htlc_script,
+            htlc_to_p2wsh_address, Chain)
         from electrum_mars.util import bfh
 
-        # Ensure we have the MARS HTLC address. The offer may have had
-        # an empty address (maker hadn't computed it yet). Recompute
-        # from the script which the taker always has.
+        # The offer was published BEFORE the maker knew the taker's pubkey,
+        # so mars_htlc_script and mars_htlc_address were empty in the offer.
+        # The taker stored these empty values. We must recompute both from
+        # the known parameters: payment_hash160, both pubkeys, mars_locktime.
+        if not swap.mars_htlc_script:
+            # In the MARS HTLC:
+            #   recipient = taker (my_pubkey) — they claim MARS
+            #   sender = maker (peer_pubkey) — they can refund
+            mars_script = create_htlc_script(
+                payment_hash160=bfh(swap.payment_hash160),
+                recipient_pubkey=bfh(swap.my_pubkey),
+                sender_pubkey=bfh(swap.peer_pubkey),
+                locktime=swap.mars_locktime,
+            )
+            swap.mars_htlc_script = mars_script.hex()
+            swap.mars_htlc_address = htlc_to_p2wsh_address(
+                mars_script, Chain.MARS)
+            self.engine.db.save(swap)
+            print(f"[SwapWorker] Recomputed MARS HTLC script + addr: "
+                  f"{swap.mars_htlc_address[:25]}...")
+
         if not swap.mars_htlc_address and swap.mars_htlc_script:
             mars_addr = htlc_to_p2wsh_address(
                 bfh(swap.mars_htlc_script), Chain.MARS)
             swap.mars_htlc_address = mars_addr
             self.engine.db.save(swap)
             print(f"[SwapWorker] Computed missing MARS HTLC addr: "
-                  f"{mars_addr[:20]}...")
+                  f"{mars_addr[:25]}...")
 
         # We need the MARS HTLC funding info. In the taker flow, we got
         # mars_htlc_address from the offer. We need to find the funding
