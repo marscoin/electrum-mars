@@ -487,7 +487,8 @@ class AtomicSwapTab(QWidget):
         swaps = self.engine.get_all_swaps()
         terminal = {SwapState.COMPLETED.value, SwapState.FAILED.value,
                     SwapState.EXPIRED.value, SwapState.MARS_REFUNDED.value,
-                    SwapState.BTC_REFUNDED.value}
+                    SwapState.BTC_REFUNDED.value,
+                    SwapState.BTC_CLAIMED.value}
         history = [s for s in swaps if s.state in terminal]
         self.history_table.setRowCount(len(history))
         for i, swap in enumerate(history):

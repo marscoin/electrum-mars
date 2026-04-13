@@ -352,6 +352,17 @@ class SwapEngine:
         swap.state = SwapState.MARS_LOCKED.value
         self.db.save(swap)
 
+        # Ensure the wallet knows about this tx so the History tab and
+        # balance update immediately. Without this, ElectrumX may not
+        # index the P2WSH output and the wallet won't see the spend.
+        try:
+            txid = tx.txid()
+            if not self.wallet.db.get_transaction(txid):
+                self.wallet.db.add_transaction(txid, tx)
+            self.wallet.add_transaction(tx)
+        except Exception as e:
+            _logger.debug(f"Could not add HTLC funding tx to wallet: {e}")
+
         _logger.info(f"Swap {swap_id}: MARS HTLC funded, txid={tx.txid()}")
         return tx.txid()
 
