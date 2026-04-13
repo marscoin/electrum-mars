@@ -451,10 +451,20 @@ class AtomicSwapTab(QWidget):
                 done_label.setEnabled(False)
                 self.active_table.setCellWidget(i, 6, done_label)
             elif (swap.role == SwapRole.TAKER.value
-                  and swap.state in (SwapState.CREATED.value,
-                                     SwapState.BTC_LOCKED.value)
+                  and swap.state == SwapState.BTC_LOCKED.value):
+                # Taker at BTC_LOCKED: the worker is trying to extract
+                # the preimage and claim MARS. Show a spinner-style label.
+                # Also offer Refund BTC as fallback if something goes wrong.
+                claiming_btn = QPushButton('Claiming MARS...')
+                claiming_btn.setStyleSheet(
+                    "background-color: #3498db; color: white;")
+                claiming_btn.setEnabled(False)
+                self.active_table.setCellWidget(i, 6, claiming_btn)
+            elif (swap.role == SwapRole.TAKER.value
+                  and swap.state == SwapState.CREATED.value
                   and swap.btc_htlc_address):
-                # Taker can refund BTC after timelock
+                # Taker at CREATED — hasn't sent BTC yet or it's unconfirmed.
+                # Can cancel or refund if they already sent.
                 refund_btn = QPushButton('Refund BTC')
                 refund_btn.setStyleSheet(
                     "background-color: #e67e22; color: white;")
