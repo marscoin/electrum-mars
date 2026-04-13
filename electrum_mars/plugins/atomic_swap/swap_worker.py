@@ -95,11 +95,18 @@ class SwapWorker:
         for swap in active:
             if swap.swap_id in self._in_flight:
                 continue
-            # Skip swaps past their timelock — those need refund handling
+            # Dispatch by role + state.
+            # IMPORTANT: Do NOT skip takers at BTC_LOCKED due to expiry —
+            # they must always try to extract the preimage and claim MARS,
+            # even if the swap is old (e.g. MARS mining was slow).
             if self._is_expired(swap):
-                await self._handle_expired(swap)
-                continue
-            # Dispatch by role + state
+                # Takers at BTC_LOCKED still need to claim — fall through
+                if (swap.role == SwapRole.TAKER.value
+                        and swap.state == SwapState.BTC_LOCKED.value):
+                    pass  # don't skip — let _advance_taker handle it
+                else:
+                    await self._handle_expired(swap)
+                    continue
             try:
                 if swap.role == SwapRole.MAKER.value:
                     await self._advance_maker(swap)
