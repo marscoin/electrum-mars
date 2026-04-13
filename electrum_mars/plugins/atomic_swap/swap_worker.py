@@ -325,8 +325,20 @@ class SwapWorker:
 
     async def _claim_mars_now(self, swap: SwapData, preimage: bytes):
         """Claim the MARS HTLC using the revealed preimage."""
-        from electrum_mars.atomic_swap_htlc import create_claim_tx
+        from electrum_mars.atomic_swap_htlc import (
+            create_claim_tx, htlc_to_p2wsh_address, Chain)
         from electrum_mars.util import bfh
+
+        # Ensure we have the MARS HTLC address. The offer may have had
+        # an empty address (maker hadn't computed it yet). Recompute
+        # from the script which the taker always has.
+        if not swap.mars_htlc_address and swap.mars_htlc_script:
+            mars_addr = htlc_to_p2wsh_address(
+                bfh(swap.mars_htlc_script), Chain.MARS)
+            swap.mars_htlc_address = mars_addr
+            self.engine.db.save(swap)
+            print(f"[SwapWorker] Computed missing MARS HTLC addr: "
+                  f"{mars_addr[:20]}...")
 
         # We need the MARS HTLC funding info. In the taker flow, we got
         # mars_htlc_address from the offer. We need to find the funding
