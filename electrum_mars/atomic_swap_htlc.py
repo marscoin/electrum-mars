@@ -227,12 +227,13 @@ def create_funding_tx(
         wallet: Electrum wallet instance
         htlc_address: P2WSH address of the HTLC
         amount_sat: amount to lock in satoshis
-        fee: fee rate or None for auto
+        fee: fee rate or None for auto (minimum 100000 sat / 0.001 MARS)
         password: wallet password for signing
 
     Returns:
         Signed PartialTransaction ready to broadcast
     """
+    MIN_FEE = 100000  # 0.001 MARS — ensures miners include promptly
     output = PartialTxOutput.from_address_and_value(htlc_address, amount_sat)
     coins = wallet.get_spendable_coins(domain=None)
     tx = wallet.make_unsigned_transaction(
@@ -240,6 +241,14 @@ def create_funding_tx(
         outputs=[output],
         fee=fee,
     )
+    # Ensure fee is at least MIN_FEE — Electrum's auto-fee can be too low
+    # on low-traffic chains like Marscoin
+    if fee is None and tx.get_fee() < MIN_FEE:
+        tx = wallet.make_unsigned_transaction(
+            coins=coins,
+            outputs=[output],
+            fee=MIN_FEE,
+        )
     wallet.sign_transaction(tx, password)
     return tx
 
