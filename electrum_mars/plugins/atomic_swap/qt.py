@@ -681,6 +681,10 @@ class AtomicSwapTab(QWidget):
             except Exception as e:
                 _logger.warning(f'Could not send acceptance: {e}')
 
+        # Remove the accepted offer from the local order book so it
+        # no longer shows in Available Offers with an active Accept button
+        self.orderbook.remove_offer(offer.offer_id)
+
         # Show BTC HTLC address with QR code
         d = BtcPaymentDialog(self, swap)
         d.exec_()
