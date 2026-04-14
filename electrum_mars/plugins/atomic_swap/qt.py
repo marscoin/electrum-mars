@@ -290,7 +290,7 @@ class AtomicSwapTab(QWidget):
     def _start_refresh_timer(self):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._refresh_all)
-        self.timer.start(30000)  # refresh every 30 seconds
+        self.timer.start(10000)  # refresh every 10 seconds
 
     def _refresh_all(self):
         self._refresh_offers()
@@ -414,20 +414,26 @@ class AtomicSwapTab(QWidget):
             state = summary['state']
             role = summary['role']
             if role == 'maker':
-                status_labels = {
-                    'created': 'Offer posted. Waiting for buyer...',
-                    'mars_locked': 'MARS locked. Waiting for BTC payment...',
-                    'btc_locked': 'BTC received. Claiming...',
-                    'btc_claimed': 'Complete! BTC received.',
-                }
+                if state == 'created' and swap.peer_pubkey:
+                    status_text = 'Buyer accepted! Funding MARS...'
+                elif state == 'created':
+                    status_text = 'Offer posted. Waiting for buyer...'
+                else:
+                    status_labels = {
+                        'mars_locked': 'MARS locked. Waiting for BTC...',
+                        'btc_locked': 'BTC received! Claiming...',
+                        'btc_claimed': 'Complete! BTC received.',
+                    }
+                    status_text = status_labels.get(state,
+                        state.replace('_', ' ').upper())
             else:
                 status_labels = {
                     'created': 'Waiting for your BTC payment...',
                     'btc_locked': 'BTC confirmed. Waiting for seller...',
                     'completed': 'MARS received!',
                 }
-            status_text = status_labels.get(state,
-                state.replace('_', ' ').upper())
+                status_text = status_labels.get(state,
+                    state.replace('_', ' ').upper())
             self.active_table.setItem(i, 4, QTableWidgetItem(status_text))
             # Format age nicely
             age_min = summary['age_minutes']
