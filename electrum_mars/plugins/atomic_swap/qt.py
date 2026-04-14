@@ -127,42 +127,43 @@ class AtomicSwapTab(QWidget):
         desc.setStyleSheet("color: gray;")
         layout.addWidget(desc)
 
-        # Action buttons — all same size via explicit styling on every button
-        # (mixing styled + native buttons causes size mismatches on macOS)
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(0)
+        # Action buttons — use QGridLayout to guarantee equal column widths
+        from PyQt5.QtWidgets import QGridLayout
+        btn_grid = QGridLayout()
+        btn_grid.setSpacing(0)
         BUTTON_MIN_HEIGHT = 44
-        BTN = ("font-size: 14px; padding: 10px; border: 1px solid #bbb; "
-               "min-height: {h}px;".format(h=BUTTON_MIN_HEIGHT))
+        BTN = ("QPushButton {{ font-size: 14px; padding: 10px; "
+               "border: 1px solid #bbb; min-height: {h}px; }}".format(
+                   h=BUTTON_MIN_HEIGHT))
 
         self.buy_btn = QPushButton('Buy MARS with BTC')
         self.buy_btn.clicked.connect(self._on_buy_mars)
         self.buy_btn.setStyleSheet(
-            BTN + "background-color: #c0392b; color: white;")
-        self.buy_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_layout.addWidget(self.buy_btn, 1)
+            BTN + "QPushButton { background-color: #c0392b; color: white; }")
+        btn_grid.addWidget(self.buy_btn, 0, 0)
 
         self.sell_btn = QPushButton('Sell MARS for BTC')
         self.sell_btn.clicked.connect(self._on_sell_mars)
         self.sell_btn.setStyleSheet(
-            BTN + "background-color: #ecf0f1; color: #2c3e50;")
-        self.sell_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_layout.addWidget(self.sell_btn, 1)
+            BTN + "QPushButton { background-color: #ecf0f1; color: #2c3e50; }")
+        btn_grid.addWidget(self.sell_btn, 0, 1)
 
         self.refresh_btn = QPushButton('Refresh Offers')
         self.refresh_btn.clicked.connect(self._refresh_offers)
         self.refresh_btn.setStyleSheet(
-            BTN + "background-color: #ecf0f1; color: #2c3e50;")
-        self.refresh_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_layout.addWidget(self.refresh_btn, 1)
+            BTN + "QPushButton { background-color: #ecf0f1; color: #2c3e50; }")
+        btn_grid.addWidget(self.refresh_btn, 0, 2)
 
         self.automaker_btn = QPushButton('Auto-Maker')
         self.automaker_btn.clicked.connect(self._on_automaker)
         self.automaker_btn.setStyleSheet(
-            BTN + "background-color: #2c3e50; color: white;")
-        self.automaker_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        btn_layout.addWidget(self.automaker_btn, 1)
-        layout.addLayout(btn_layout)
+            BTN + "QPushButton { background-color: #2c3e50; color: white; }")
+        btn_grid.addWidget(self.automaker_btn, 0, 3)
+
+        # Force all 4 columns to stretch equally
+        for col in range(4):
+            btn_grid.setColumnStretch(col, 1)
+        layout.addLayout(btn_grid)
 
         # Auto-maker status bar
         self.automaker_status = QLabel('')

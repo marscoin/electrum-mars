@@ -272,15 +272,40 @@ class SwapWorker:
                 await self._claim_mars_now(swap, preimage)
 
     async def _check_for_acceptance(self, swap: SwapData) -> Optional[dict]:
-        """Poll ElectrumX for offer acceptance (maker side)."""
+        """Poll ALL connected ElectrumX servers for offer acceptance.
+
+        The taker may have sent their acceptance to a different server
+        than the one the maker is primarily connected to. Acceptances
+        are stored in-memory per server and don't gossip, so we must
+        check every server we're connected to.
+        """
+        import asyncio as _asyncio
+        network = self.engine.network
+        if network is None:
+            return None
         try:
-            network = self.engine.network
-            if network is None or network.interface is None:
+            with network.interfaces_lock:
+                interfaces = list(network.interfaces.values())
+            if not interfaces:
                 return None
-            result = await network.interface.session.send_request(
-                'atomicswap.get_acceptance', [swap.swap_id], timeout=15)
-            if result and isinstance(result, dict):
-                return result
+
+            async def query_one(iface):
+                try:
+                    result = await iface.session.send_request(
+                        'atomicswap.get_acceptance',
+                        [swap.swap_id], timeout=15)
+                    if result and isinstance(result, dict):
+                        return result
+                except Exception:
+                    pass
+                return None
+
+            results = await _asyncio.gather(
+                *[query_one(iface) for iface in interfaces],
+                return_exceptions=True)
+            for r in results:
+                if isinstance(r, dict):
+                    return r
         except Exception as e:
             _logger.debug(f"get_acceptance: {e}")
         return None
