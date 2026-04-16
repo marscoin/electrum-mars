@@ -340,19 +340,41 @@ class AutoMaker:
                 f"Auto-maker: {len(competing)} competing offers, "
                 f"best rate {min(o.rate for o in competing):.10f}")
 
-        # Cancel old auto-generated offers and their swap records
+        # Cancel ALL our old offers — both local and on ElectrumX.
+        # After a restart, the local orderbook is empty but ElectrumX
+        # still has our old offers. Fetch from server, match by our
+        # maker_address, and cancel everything before posting fresh.
+        my_address = self.engine.wallet.get_receiving_address()
+
+        # Cancel local offers
         for offer in self.orderbook.get_my_offers():
             self.orderbook.remove_offer(offer.offer_id)
-            # Cancel on ElectrumX too
-            if self.engine.network:
-                try:
-                    interface = self.engine.network.interface
-                    if interface:
-                        await interface.session.send_request(
-                            'atomicswap.cancel_offer',
-                            [offer.offer_id], timeout=10)
-                except Exception:
-                    pass
+
+        # Cancel on ALL ElectrumX servers
+        if self.engine.network:
+            try:
+                await self.orderbook.fetch_from_electrumx(self.engine.network)
+                # Find our own offers by maker_address
+                all_offers = list(self.orderbook._offers.values())
+                for offer in all_offers:
+                    if offer.maker_address == my_address:
+                        self.orderbook.remove_offer(offer.offer_id)
+                        # Cancel on server
+                        try:
+                            with self.engine.network.interfaces_lock:
+                                interfaces = list(
+                                    self.engine.network.interfaces.values())
+                            for iface in interfaces:
+                                try:
+                                    await iface.session.send_request(
+                                        'atomicswap.cancel_offer',
+                                        [offer.offer_id], timeout=10)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+            except Exception as e:
+                _logger.debug(f"Auto-maker: cancel cleanup error: {e}")
 
         current_height = 0
         if self.engine.network:
