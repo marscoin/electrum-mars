@@ -42,8 +42,8 @@ DEFAULT_DAILY_LIMIT_MARS = 10000   # max MARS to sell per 24h
 DEFAULT_MAX_SINGLE_SWAP = 1000     # max MARS per single swap
 DEFAULT_MIN_SINGLE_SWAP = 10       # min MARS per swap (anti-dust)
 DEFAULT_RESERVE_PERCENT = 20.0     # keep 20% of balance unlocked
-DEFAULT_OFFER_DURATION_HOURS = 4   # offers valid for 4 hours
-DEFAULT_REFRESH_INTERVAL = 300     # refresh price every 5 minutes
+DEFAULT_OFFER_DURATION_HOURS = 0.25  # offers valid for 15 minutes (auto-maker refreshes them)
+DEFAULT_REFRESH_INTERVAL = 300       # refresh price every 5 minutes
 MIN_BALANCE_THRESHOLD = 200        # minimum MARS balance to activate (in MARS)
 
 
@@ -380,6 +380,7 @@ class AutoMaker:
             )
 
             from .orderbook import SwapOffer
+            now = time.time()
             offer = SwapOffer(
                 offer_id=swap.swap_id,
                 mars_amount_sat=mars_sat,
@@ -390,8 +391,9 @@ class AutoMaker:
                 mars_htlc_address=swap.mars_htlc_address or '',
                 mars_htlc_script=swap.mars_htlc_script or '',
                 mars_locktime=swap.mars_locktime,
-                expires_at=time.time() + self.config.offer_duration_hours * 3600,
+                expires_at=now + self.config.offer_duration_hours * 3600,
                 maker_address=self.engine.wallet.get_receiving_address(),
+                last_seen=now,
             )
             self.orderbook.add_my_offer(offer)
 

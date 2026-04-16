@@ -38,6 +38,7 @@ class SwapOffer:
     mars_locktime: int            # block height for CLTV
     expires_at: float             # unix timestamp
     maker_address: str = ""       # maker's Marscoin address (for identification)
+    last_seen: float = 0.0        # unix timestamp of last heartbeat/refresh
     signature: str = ""           # signature of offer data
 
     def is_expired(self) -> bool:

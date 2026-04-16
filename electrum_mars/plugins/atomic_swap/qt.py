@@ -960,6 +960,7 @@ class CreateOfferDialog(QDialog):
         timeout_map = {0: 2, 1: 4, 2: 6, 3: 12}
         hours = timeout_map.get(self.timeout_hours.currentIndex(), 4)
 
+        now = time.time()
         offer = SwapOffer(
             offer_id=swap.swap_id,
             mars_amount_sat=mars_sat,
@@ -970,8 +971,9 @@ class CreateOfferDialog(QDialog):
             mars_htlc_address=swap.mars_htlc_address or '',
             mars_htlc_script=swap.mars_htlc_script or '',
             mars_locktime=swap.mars_locktime,
-            expires_at=time.time() + hours * 3600,
+            expires_at=now + hours * 3600,
             maker_address=self.engine.wallet.get_receiving_address(),
+            last_seen=now,
         )
         self.orderbook.add_my_offer(offer)
 
