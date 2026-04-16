@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 _logger = get_logger(__name__)
 
-PRICE_API_URL = "https://price.marscoin.org/json"
+PRICE_API_URL = "https://price.marscoin.org/json/"
 BTC_PRICE_API_URL = "https://mempool.space/api/v1/prices"
 
 # Defaults
@@ -157,7 +157,7 @@ class AutoMaker:
                 async with session.get(PRICE_API_URL,
                                        ssl=False) as resp:
                     if resp.status == 200:
-                        data = await resp.json()
+                        data = await resp.json(content_type=None)
                         mars_usd = data['data']['154']['quote']['USD']['price']
                     else:
                         return None
