@@ -128,9 +128,24 @@ class AtomicSwapTab(QWidget):
         header.setFont(QFont('', 14, QFont.Bold))
         layout.addWidget(header)
 
+        desc_layout = QHBoxLayout()
         desc = QLabel('No exchange needed. Trustless settlement via hash time-locked contracts.')
         desc.setStyleSheet("color: gray;")
-        layout.addWidget(desc)
+        desc_layout.addWidget(desc)
+
+        from PyQt5.QtWidgets import QLabel as _QLabel
+        info_link = _QLabel(
+            '<a href="https://www.marscoin.org/academy/atomic-swaps" '
+            'style="color: #c0392b; text-decoration: none;">\u2139 Learn more</a>'
+            ' &nbsp;|&nbsp; '
+            '<a href="https://explore.marscoin.org/atomic-swaps/" '
+            'style="color: #c0392b; text-decoration: none;">\U0001f4ca Live order book</a>'
+        )
+        info_link.setOpenExternalLinks(True)
+        info_link.setStyleSheet("font-size: 12px;")
+        desc_layout.addWidget(info_link)
+        desc_layout.addStretch()
+        layout.addLayout(desc_layout)
 
         # Action buttons — use QGridLayout to guarantee equal column widths
         from PyQt5.QtWidgets import QGridLayout
