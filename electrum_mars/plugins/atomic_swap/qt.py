@@ -1046,8 +1046,11 @@ class AutoMakerDialog(QDialog):
         form.addRow('BTC receive address:', self.btc_receive_addr_am)
 
         self.fee_input = QLineEdit(str(config.fee_percent))
-        self.fee_input.setToolTip('Percentage added to market rate (your profit)')
-        form.addRow('Fee spread (%):', self.fee_input)
+        self.fee_input.setToolTip(
+            'Your minimum profit per swap. The smallest offer uses this exact fee.\n'
+            'Larger offers add a premium on top. Competition can compress the\n'
+            'premium but never push you below this floor.')
+        form.addRow('Minimum fee (%):', self.fee_input)
 
         self.daily_limit = QLineEdit(str(int(config.daily_limit_mars_sat / 1e8)))
         self.daily_limit.setToolTip('Maximum MARS to sell in a 24-hour period')

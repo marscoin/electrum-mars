@@ -262,18 +262,24 @@ class AutoMaker:
                                num_tiers: int) -> float:
         """Calculate per-tier rate with spread pricing.
 
-        Smaller offers get a tighter spread (attract test swaps),
-        larger offers get a wider spread (compensate for exposure).
+        fee_percent is the MINIMUM fee (floor). The smallest offer
+        uses exactly this fee. Larger offers add a premium that
+        scales linearly up to +4 percentage points above the floor.
 
-        Tier 0 (smallest): base fee * 0.6
-        Tier N (largest):  base fee * 1.4
+        Example with fee_percent=5 and 5 tiers:
+            Tier 0 (smallest): 5%  (the floor)
+            Tier 1:            6%
+            Tier 2:            7%
+            Tier 3:            8%
+            Tier 4 (largest):  9%
         """
-        fee = self.config.fee_percent / 100.0
+        floor_fee = self.config.fee_percent / 100.0
         if num_tiers <= 1:
-            return market_rate * (1 + fee)
-        # Linear interpolation: 60% to 140% of base fee
-        scale = 0.6 + 0.8 * (tier_index / (num_tiers - 1))
-        return market_rate * (1 + fee * scale)
+            return market_rate * (1 + floor_fee)
+        # Premium scales from 0% (smallest) to 4% (largest) above floor
+        max_premium = 0.04
+        premium = max_premium * (tier_index / (num_tiers - 1))
+        return market_rate * (1 + floor_fee + premium)
 
     def _get_competing_offers(self) -> list:
         """Get non-own offers currently on the book."""
@@ -283,20 +289,21 @@ class AutoMaker:
                                       competing: list) -> float:
         """If there are competing offers, position slightly better.
 
-        Undercuts the best competing rate by 1% of the spread,
-        but never goes below our minimum fee (60% of base).
+        Undercuts the best competing rate by 50% of the gap,
+        but NEVER goes below market_rate + minimum fee. The user's
+        floor is sacred — competition can compress the premium
+        tiers but can't force you below your stated minimum.
         """
         if not competing:
             return rate
         best_competing = min(o.rate for o in competing)
         if rate > best_competing:
-            # Undercut by 1% of the gap
             gap = rate - best_competing
             adjusted = rate - gap * 0.5
-            # Don't go below market + minimum fee
+            # Floor: never below market + user's minimum fee
             market_rate = self.stats.last_rate_mars_btc
             if market_rate > 0:
-                floor = market_rate * (1 + self.config.fee_percent / 100.0 * 0.4)
+                floor = market_rate * (1 + self.config.fee_percent / 100.0)
                 adjusted = max(adjusted, floor)
             return adjusted
         return rate
