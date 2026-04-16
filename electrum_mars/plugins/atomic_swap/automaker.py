@@ -44,6 +44,7 @@ DEFAULT_MIN_SINGLE_SWAP = 10       # min MARS per swap (anti-dust)
 DEFAULT_RESERVE_PERCENT = 20.0     # keep 20% of balance unlocked
 DEFAULT_OFFER_DURATION_HOURS = 4   # offers valid for 4 hours
 DEFAULT_REFRESH_INTERVAL = 300     # refresh price every 5 minutes
+MIN_BALANCE_THRESHOLD = 200        # minimum MARS balance to activate (in MARS)
 
 
 @dataclass
@@ -212,30 +213,99 @@ class AutoMaker:
         return max(0, remaining)
 
     def calculate_offer_sizes(self) -> list:
-        """Determine how to split available balance into offers.
+        """Split available balance into tiered ascending offers.
 
-        Returns list of offer amounts in satoshis.
+        Instead of equal splits, creates offers of increasing size.
+        Small offers attract cautious first-time buyers; large offers
+        serve whales. Example for 1000 MARS with 5 offers:
+            ~67, ~133, ~200, ~267, ~333 (ratio 1:2:3:4:5)
+
+        Returns list of offer amounts in satoshis, ascending.
         """
         available = self.get_available_balance_sat()
         daily_remaining = self.get_remaining_daily_limit_sat()
         total = min(available, daily_remaining)
 
+        # Minimum balance threshold
+        threshold_sat = int(MIN_BALANCE_THRESHOLD * 1e8)
+        if total < threshold_sat:
+            _logger.info(
+                f"Auto-maker: balance {total/1e8:.0f} MARS below "
+                f"{MIN_BALANCE_THRESHOLD} threshold")
+            return []
+
         if total < self.config.min_single_swap_sat:
             return []
 
-        # Split into num_offers equal parts, capped at max_single_swap
         num = self.config.num_offers
-        per_offer = min(total // num, self.config.max_single_swap_sat)
 
-        if per_offer < self.config.min_single_swap_sat:
-            # Not enough for multiple offers — make one
-            per_offer = min(total, self.config.max_single_swap_sat)
-            return [per_offer]
+        # Ascending tiers: weights 1, 2, 3, ..., N
+        weights = list(range(1, num + 1))
+        weight_sum = sum(weights)
+        tiers = []
+        for w in weights:
+            size = int(total * w / weight_sum)
+            size = min(size, self.config.max_single_swap_sat)
+            if size >= self.config.min_single_swap_sat:
+                tiers.append(size)
 
-        return [per_offer] * num
+        if not tiers:
+            # Everything too small for multiple — make one offer
+            size = min(total, self.config.max_single_swap_sat)
+            if size >= self.config.min_single_swap_sat:
+                return [size]
+            return []
+
+        return tiers
+
+    def calculate_tiered_rate(self, market_rate: float, tier_index: int,
+                               num_tiers: int) -> float:
+        """Calculate per-tier rate with spread pricing.
+
+        Smaller offers get a tighter spread (attract test swaps),
+        larger offers get a wider spread (compensate for exposure).
+
+        Tier 0 (smallest): base fee * 0.6
+        Tier N (largest):  base fee * 1.4
+        """
+        fee = self.config.fee_percent / 100.0
+        if num_tiers <= 1:
+            return market_rate * (1 + fee)
+        # Linear interpolation: 60% to 140% of base fee
+        scale = 0.6 + 0.8 * (tier_index / (num_tiers - 1))
+        return market_rate * (1 + fee * scale)
+
+    def _get_competing_offers(self) -> list:
+        """Get non-own offers currently on the book."""
+        return self.orderbook.get_offers()
+
+    def _adjust_rate_for_competition(self, rate: float,
+                                      competing: list) -> float:
+        """If there are competing offers, position slightly better.
+
+        Undercuts the best competing rate by 1% of the spread,
+        but never goes below our minimum fee (60% of base).
+        """
+        if not competing:
+            return rate
+        best_competing = min(o.rate for o in competing)
+        if rate > best_competing:
+            # Undercut by 1% of the gap
+            gap = rate - best_competing
+            adjusted = rate - gap * 0.5
+            # Don't go below market + minimum fee
+            market_rate = self.stats.last_rate_mars_btc
+            if market_rate > 0:
+                floor = market_rate * (1 + self.config.fee_percent / 100.0 * 0.4)
+                adjusted = max(adjusted, floor)
+            return adjusted
+        return rate
 
     async def create_offers(self):
-        """Create or refresh market making offers based on current price."""
+        """Create or refresh market making offers based on current price.
+
+        V2: tiered sizing, spread pricing, competitive awareness.
+        """
         if not self.config.enabled:
             return
 
@@ -250,16 +320,32 @@ class AutoMaker:
             return
 
         market_rate = prices['mars_btc']
-        offer_rate = self.calculate_offer_rate(market_rate, selling=True)
         offer_sizes = self.calculate_offer_sizes()
 
         if not offer_sizes:
             _logger.info("Auto-maker: no balance available for offers")
             return
 
-        # Cancel old auto-generated offers
+        # Check competing offers for pricing
+        competing = self._get_competing_offers()
+        if competing:
+            _logger.info(
+                f"Auto-maker: {len(competing)} competing offers, "
+                f"best rate {min(o.rate for o in competing):.10f}")
+
+        # Cancel old auto-generated offers and their swap records
         for offer in self.orderbook.get_my_offers():
             self.orderbook.remove_offer(offer.offer_id)
+            # Cancel on ElectrumX too
+            if self.engine.network:
+                try:
+                    interface = self.engine.network.interface
+                    if interface:
+                        await interface.session.send_request(
+                            'atomicswap.cancel_offer',
+                            [offer.offer_id], timeout=10)
+                except Exception:
+                    pass
 
         current_height = 0
         if self.engine.network:
@@ -267,8 +353,15 @@ class AutoMaker:
             if bc:
                 current_height = bc.height()
 
-        for mars_sat in offer_sizes:
-            btc_sat = int(mars_sat * offer_rate)
+        num_tiers = len(offer_sizes)
+        for tier_idx, mars_sat in enumerate(offer_sizes):
+            # Per-tier pricing: smaller offers get tighter spread
+            tier_rate = self.calculate_tiered_rate(
+                market_rate, tier_idx, num_tiers)
+            # Adjust for competition
+            tier_rate = self._adjust_rate_for_competition(
+                tier_rate, competing)
+            btc_sat = int(mars_sat * tier_rate)
             if btc_sat <= 0:
                 continue
 
@@ -284,7 +377,7 @@ class AutoMaker:
                 offer_id=swap.swap_id,
                 mars_amount_sat=mars_sat,
                 btc_amount_sat=btc_sat,
-                rate=offer_rate,
+                rate=tier_rate,
                 maker_pubkey=swap.my_pubkey,
                 payment_hash160=swap.payment_hash160,
                 mars_htlc_address=swap.mars_htlc_address or '',
@@ -294,10 +387,25 @@ class AutoMaker:
                 maker_address=self.engine.wallet.get_receiving_address(),
             )
             self.orderbook.add_my_offer(offer)
-            _logger.info(f"Auto-maker: created offer {swap.swap_id[:8]} — "
-                        f"{mars_sat/1e8:.2f} MARS for {btc_sat/1e8:.8f} BTC "
-                        f"(rate: {offer_rate:.10f}, fee: {self.config.fee_percent}%)")
 
+            # Publish to ElectrumX
+            if self.engine.network:
+                try:
+                    await self.orderbook.publish_to_electrumx(
+                        self.engine.network, offer)
+                except Exception:
+                    pass
+
+            fee_pct = (tier_rate / market_rate - 1) * 100 if market_rate > 0 else 0
+            _logger.info(
+                f"Auto-maker: tier {tier_idx+1}/{num_tiers} — "
+                f"{mars_sat/1e8:.0f} MARS for {btc_sat/1e8:.8f} BTC "
+                f"(rate: {tier_rate:.10f}, spread: {fee_pct:.1f}%)")
+
+        _logger.info(
+            f"Auto-maker: posted {num_tiers} tiered offers, "
+            f"market rate {market_rate:.10f} BTC/MARS "
+            f"(${prices['mars_usd']:.4f}/MARS)")
         self._save_stats()
 
     async def run_loop(self):
