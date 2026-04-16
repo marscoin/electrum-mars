@@ -113,6 +113,11 @@ class AtomicSwapTab(QWidget):
         self._setup_ui()
         self._start_refresh_timer()
 
+        # Auto-start if config says enabled (e.g. was running before restart)
+        if self.automaker.config.enabled and self.automaker.config.btc_receive_address:
+            self.automaker.start()
+            _logger.info("Auto-maker auto-started from saved config")
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
