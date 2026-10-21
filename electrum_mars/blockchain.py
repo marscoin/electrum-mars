@@ -38,7 +38,7 @@ try:
     import scrypt
     getPoWHash = lambda x: scrypt.hash(x, x, N=1024, r=1, p=1, buflen=32)
     SCRYPT_NATIVE = True
-except ImportError:
+except Exception:  # missing, or a frozen build without its C extension
     util.print_msg("Warning: package scrypt not available; synchronization could be very slow")
     from .scrypt import scrypt_1024_1_1_80 as getPoWHash
 

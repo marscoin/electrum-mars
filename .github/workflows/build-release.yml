@@ -75,6 +75,7 @@ jobs:
             --add-data "electrum_mars/lnwire:electrum_mars/lnwire" \
             --add-binary "electrum_mars/libsecp256k1.so.0:." \
             --hidden-import electrum_mars \
+            --hidden-import _scrypt \
             --hidden-import electrum_mars.plugins.jade.jade \
             --hidden-import electrum_mars.plugins.jade.jadepy.jade \
             --collect-submodules bitstring \
@@ -169,6 +170,7 @@ jobs:
             --add-data "electrum_mars/gui/icons;electrum_mars/gui/icons" `
             --add-data "electrum_mars/lnwire;electrum_mars/lnwire" `
             --icon electrum_mars/gui/icons/marscoin.ico `
+            --add-binary "electrum_mars/libsecp256k1-0.dll;electrum_mars" `
             --hidden-import electrum_mars `
             --hidden-import electrum_mars.plugins.jade.jade `
             --hidden-import electrum_mars.plugins.jade.jadepy.jade `
