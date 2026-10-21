@@ -19,7 +19,6 @@ block_cipher = None
 
 # see https://github.com/pyinstaller/pyinstaller/issues/2005
 hiddenimports = []
-hiddenimports += collect_submodules('pkg_resources')  # workaround for https://github.com/pypa/setuptools/issues/1963
 hiddenimports += collect_submodules('trezorlib')
 hiddenimports += collect_submodules('safetlib')
 hiddenimports += collect_submodules('btchip')
@@ -88,6 +87,11 @@ a = Analysis([electrum+ MAIN_SCRIPT,
              binaries=binaries,
              datas=datas,
              hiddenimports=hiddenimports,
+             # Current setuptools has no real pkg_resources; bundling the
+             # empty namespace left PyInstaller's pkg_resources runtime hook
+             # crashing at launch. Nothing needs it (the Linux and Windows
+             # builds don't include it either).
+             excludes=['pkg_resources'],
              hookspath=[])
 
 # http://stackoverflow.com/questions/19055089/pyinstaller-onefile-warning-pyconfig-h-when-importing-scipy-or-scipy-signal
