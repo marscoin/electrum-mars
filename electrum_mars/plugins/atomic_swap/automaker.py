@@ -308,6 +308,17 @@ class AutoMaker:
             return adjusted
         return rate
 
+    @staticmethod
+    async def _has_acceptance(offer_id: str, interfaces) -> bool:
+        for iface in interfaces:
+            try:
+                if await iface.session.send_request(
+                        'atomicswap.get_acceptance', [offer_id], timeout=10):
+                    return True
+            except Exception:
+                pass
+        return False
+
     async def create_offers(self):
         """Create or refresh market making offers based on current price.
 
@@ -354,16 +365,24 @@ class AutoMaker:
         if self.engine.network:
             try:
                 await self.orderbook.fetch_from_electrumx(self.engine.network)
+                with self.engine.network.interfaces_lock:
+                    interfaces = list(self.engine.network.interfaces.values())
                 # Find our own offers by maker_address
                 all_offers = list(self.orderbook._offers.values())
                 for offer in all_offers:
                     if offer.maker_address == my_address:
                         self.orderbook.remove_offer(offer.offer_id)
+                        # Never cancel an offer a buyer has already taken:
+                        # cancelling drops the acceptance before the swap
+                        # worker picks it up, and the buyer waits for MARS
+                        # that never comes.
+                        if await self._has_acceptance(offer.offer_id, interfaces):
+                            _logger.info(
+                                f"Auto-maker: offer {offer.offer_id[:8]} was taken; "
+                                f"leaving it for the swap worker")
+                            continue
                         # Cancel on server
                         try:
-                            with self.engine.network.interfaces_lock:
-                                interfaces = list(
-                                    self.engine.network.interfaces.values())
                             for iface in interfaces:
                                 try:
                                     await iface.session.send_request(
