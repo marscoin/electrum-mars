@@ -34,6 +34,9 @@ from electrum_mars.crypto import hash_160
 from electrum_mars.logging import get_logger
 from electrum_mars.util import bfh, bh2u
 
+from .safety import (btc_window_problem, expected_mars_htlc,
+                     pick_mars_funding, refund_order_problem)
+
 if TYPE_CHECKING:
     from electrum_mars.wallet import Abstract_Wallet
     from electrum_mars.network import Network
@@ -105,6 +108,24 @@ class SwapData:
     updated_at: float = 0.0
     error_msg: Optional[str] = None
 
+    # Taker: True once the maker's MARS is proven locked (SPV) in the lockbox
+    # the taker expects. Only then is the taker shown where to send BTC.
+    mars_verified: bool = False
+    verify_status: Optional[str] = None
+
+
+_SWAP_FIELDS = None
+
+
+def _swap_from_json(data: str) -> 'SwapData':
+    """Load a swap, ignoring fields this version doesn't know."""
+    global _SWAP_FIELDS
+    if _SWAP_FIELDS is None:
+        from dataclasses import fields as _fields
+        _SWAP_FIELDS = {f.name for f in _fields(SwapData)}
+    d = json.loads(data)
+    return SwapData(**{k: v for k, v in d.items() if k in _SWAP_FIELDS})
+
 
 class SwapDB:
     """SQLite persistence for swap data."""
@@ -143,7 +164,7 @@ class SwapDB:
             'SELECT data FROM swaps WHERE swap_id = ?', (swap_id,)).fetchone()
         conn.close()
         if row:
-            return SwapData(**json.loads(row[0]))
+            return _swap_from_json(row[0])
         return None
 
     def load_by_state(self, state: str) -> List[SwapData]:
@@ -151,7 +172,7 @@ class SwapDB:
         rows = conn.execute(
             'SELECT data FROM swaps WHERE state = ?', (state,)).fetchall()
         conn.close()
-        return [SwapData(**json.loads(r[0])) for r in rows]
+        return [_swap_from_json(r[0]) for r in rows]
 
     def load_active(self) -> List[SwapData]:
         """Load all swaps that are not in a terminal state.
@@ -167,14 +188,14 @@ class SwapDB:
             'SELECT data FROM swaps WHERE state NOT IN (?,?,?,?,?,?)',
             terminal).fetchall()
         conn.close()
-        return [SwapData(**json.loads(r[0])) for r in rows]
+        return [_swap_from_json(r[0]) for r in rows]
 
     def load_all(self) -> List[SwapData]:
         conn = sqlite3.connect(self.db_path)
         rows = conn.execute(
             'SELECT data FROM swaps ORDER BY created_at DESC').fetchall()
         conn.close()
-        return [SwapData(**json.loads(r[0])) for r in rows]
+        return [_swap_from_json(r[0]) for r in rows]
 
 
 class SwapEngine:
@@ -301,6 +322,139 @@ class SwapEngine:
         _logger.info(f"Created taker swap {swap_id}: "
                     f"{btc_amount_sat} BTC sat for {mars_amount_sat} MARS sat")
         return swap
+
+    # ---------------------------------------------------------------- taker safety
+
+    async def verify_taker_mars_lock(self, swap_id: str) -> Optional[SwapData]:
+        """Taker: prove the maker's MARS is locked before paying any BTC.
+
+        Rebuilds the expected MARS lockbox from values the taker knows
+        (hash, both pubkeys, MARS refund height), checks the refund clocks,
+        then looks for an output paying that lockbox with enough MARS and
+        confirmations, and checks it with an SPV proof against our own
+        header chain, so a lying server can't invent the lock. Sets
+        ``mars_verified`` on success. Fails the swap only for problems that
+        can't fix themselves, and never once BTC has been paid.
+        """
+        swap = self.db.load(swap_id)
+        if (swap is None or swap.role != SwapRole.TAKER.value
+                or swap.state != SwapState.CREATED.value or swap.mars_verified):
+            return swap
+
+        script, address = expected_mars_htlc(
+            swap.payment_hash160, swap.my_pubkey, swap.peer_pubkey, swap.mars_locktime)
+        if swap.mars_htlc_address and swap.mars_htlc_address != address:
+            return await self._fail_taker(
+                swap, "the seller's MARS lockbox does not match the agreed terms")
+        swap.mars_htlc_script, swap.mars_htlc_address = script.hex(), address
+
+        mars_height = self.network.get_local_height() if self.network else 0
+        btc_height = await self.btc_monitor.get_block_height()
+        if not mars_height or not btc_height:
+            swap.verify_status = 'Checking the Bitcoin and Marscoin networks…'
+            self.db.save(swap)
+            return swap
+        problem = (refund_order_problem(swap.mars_locktime, mars_height,
+                                        swap.btc_locktime, btc_height)
+                   or btc_window_problem(swap.btc_locktime, btc_height))
+        if problem:
+            return await self._fail_taker(swap, problem)
+
+        candidates = await self._mars_lockbox_outputs(address)
+        funding, status = pick_mars_funding(
+            candidates, address, swap.mars_amount_sat, mars_height)
+        if funding and not await self._spv_verified(funding, address, swap.mars_amount_sat):
+            funding, status = None, 'Verifying the MARS lock against the Marscoin chain…'
+        if funding:
+            swap.mars_verified = True
+            swap.mars_funding_txid = funding['txid']
+            swap.mars_funding_vout = funding['vout']
+            swap.verify_status = (f"MARS locked and verified "
+                                  f"({funding['confirmations']} confirmations)")
+            _logger.info(f"Taker {swap.swap_id[:8]}: MARS lock verified, "
+                         f"tx={funding['txid']}:{funding['vout']}")
+        else:
+            swap.verify_status = status
+        self.db.save(swap)
+        return swap
+
+    async def _fail_taker(self, swap: SwapData, reason: str) -> SwapData:
+        """Stop a taker swap before payment. If BTC was already sent (a swap
+        started by an older version), keep it active so it can be refunded."""
+        paid = None
+        try:
+            paid = await self.btc_monitor.check_htlc_funded(
+                swap.btc_htlc_address, swap.btc_amount_sat, min_confirmations=0)
+        except Exception as e:
+            _logger.warning(f"Taker {swap.swap_id[:8]}: payment check failed: {e}")
+            swap.verify_status = 'Checking the Bitcoin network…'
+            self.db.save(swap)
+            return swap
+        swap.error_msg = f'Do not send BTC: {reason}.'
+        if not paid:
+            swap.state = SwapState.FAILED.value
+        _logger.warning(f"Taker {swap.swap_id[:8]}: refusing to pay: {reason}")
+        self.db.save(swap)
+        return swap
+
+    async def _mars_lockbox_outputs(self, address: str) -> List[dict]:
+        """Outputs paying ``address``, as dicts with txid, vout, address,
+        value and height. Uses the server index, then the repair RPC for
+        P2WSH outputs the index may have missed."""
+        from electrum_mars import bitcoin
+        from electrum_mars.transaction import Transaction
+        out = []
+        iface = self.network.interface if self.network else None
+        if iface is None:
+            return out
+        sh = bitcoin.address_to_scripthash(address)
+        try:
+            for u in await iface.session.send_request(
+                    'blockchain.scripthash.listunspent', [sh]) or []:
+                out.append({'txid': u['tx_hash'], 'vout': u['tx_pos'], 'address': address,
+                            'value': u.get('value', 0), 'height': u.get('height', 0)})
+        except Exception as e:
+            _logger.debug(f"listunspent {address[:16]}: {e}")
+        if out:
+            return out
+        try:
+            for item in await iface.session.send_request(
+                    'blockchain.scripthash.repair', [sh, address]) or []:
+                if not item.get('tx_hex'):
+                    continue
+                tx = Transaction(item['tx_hex'])
+                for i, o in enumerate(tx.outputs()):
+                    out.append({'txid': item['tx_hash'], 'vout': i, 'address': o.address,
+                                'value': o.value, 'height': item.get('height', 0)})
+        except Exception as e:
+            _logger.debug(f"repair {address[:16]}: {e}")
+        return out
+
+    async def _spv_verified(self, funding: dict, address: str, min_amount_sat: int) -> bool:
+        """True if the funding output is real: the transaction itself pays
+        ``address`` at least ``min_amount_sat`` in output ``vout``, and a
+        Merkle proof places it in the block at ``height`` of our own header
+        chain. Nothing here relies on the server's word."""
+        from electrum_mars.transaction import Transaction
+        from electrum_mars.verifier import SPV
+        txid, vout, height = funding['txid'], funding['vout'], funding['height']
+        try:
+            tx = Transaction(await self.network.get_transaction(txid))
+            if tx.txid() != txid:
+                return False
+            outputs = tx.outputs()
+            if vout >= len(outputs) or outputs[vout].address != address \
+                    or outputs[vout].value < min_amount_sat:
+                return False
+            header = self.network.blockchain().read_header(height)
+            if header is None:
+                return False
+            merkle = await self.network.get_merkle_for_transaction(txid, height)
+            root = SPV.hash_merkle_root(merkle['merkle'], txid, merkle['pos'])
+            return root == header.get('merkle_root')
+        except Exception as e:
+            _logger.info(f"SPV check for {txid[:16]} at {height} failed: {e}")
+            return False
 
     def set_peer_info(self, swap_id: str, peer_pubkey: str):
         """Set the peer's pubkey after they accept the offer."""

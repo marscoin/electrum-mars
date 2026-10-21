@@ -31,6 +31,7 @@ from .swap_engine import SwapEngine, SwapData, SwapState, SwapRole
 from .orderbook import OrderBook, SwapOffer
 from .automaker import AutoMaker, AutoMakerConfig
 from .swap_worker import SwapWorker
+from .safety import btc_window_problem, refund_order_problem
 
 if TYPE_CHECKING:
     from electrum_mars.gui.qt.main_window import ElectrumWindow
@@ -95,6 +96,27 @@ class Plugin(BasePlugin):
             idx = window.tabs.indexOf(tab)
             if idx >= 0:
                 window.tabs.removeTab(idx)
+
+
+def _fetch_btc_height(base_url: str) -> Optional[int]:
+    """Bitcoin tip height from mempool.space, or None. Uses its own
+    monitor: the engine's HTTP session belongs to the network thread."""
+    from electrum_mars.btc_monitor import BtcMonitor
+    monitor = BtcMonitor()
+    monitor.base_url = base_url
+
+    async def run():
+        try:
+            return await monitor.get_block_height()
+        finally:
+            await monitor.close()
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(run())
+    except Exception:
+        return None
+    finally:
+        loop.close()
 
 
 class AtomicSwapTab(QWidget):
@@ -447,9 +469,13 @@ class AtomicSwapTab(QWidget):
                     }
                     status_text = status_labels.get(state,
                         state.replace('_', ' ').upper())
+            elif state == 'created' and swap.error_msg:
+                status_text = swap.error_msg
+            elif state == 'created' and not swap.mars_verified:
+                status_text = swap.verify_status or 'Waiting for the seller to lock MARS...'
             else:
                 status_labels = {
-                    'created': 'Waiting for your BTC payment...',
+                    'created': 'MARS locked and verified. Send your BTC.',
                     'btc_locked': 'BTC confirmed. Waiting for seller...',
                     'completed': 'MARS received!',
                 }
@@ -466,7 +492,23 @@ class AtomicSwapTab(QWidget):
                 age_str = f'{age_min // 1440}d ago'
             self.active_table.setItem(i, 5, QTableWidgetItem(age_str))
             # Action button depends on state and role
-            if swap.state == SwapState.CREATED.value:
+            if (swap.state == SwapState.CREATED.value
+                    and swap.role == SwapRole.TAKER.value):
+                # Taker: reopen the payment window (it only shows the BTC
+                # address once the seller's MARS is verified), or cancel.
+                cell = QWidget()
+                row = QHBoxLayout(cell)
+                row.setContentsMargins(0, 0, 0, 0)
+                pay_btn = QPushButton('Pay BTC' if swap.mars_verified else 'Status')
+                if swap.mars_verified:
+                    pay_btn.setStyleSheet("background-color: #27ae60; color: white;")
+                pay_btn.clicked.connect(lambda _, s=swap: self._show_payment(s))
+                cancel_btn = QPushButton('Cancel')
+                cancel_btn.clicked.connect(lambda _, s=swap: self._cancel_swap(s))
+                row.addWidget(pay_btn)
+                row.addWidget(cancel_btn)
+                self.active_table.setCellWidget(i, 6, cell)
+            elif swap.state == SwapState.CREATED.value:
                 cancel_btn = QPushButton('Cancel')
                 cancel_btn.clicked.connect(lambda _, s=swap: self._cancel_swap(s))
                 self.active_table.setCellWidget(i, 6, cancel_btn)
@@ -650,32 +692,47 @@ class AtomicSwapTab(QWidget):
         self._refresh_all()
 
     def _accept_offer(self, offer: SwapOffer):
-        """Accept a swap offer (taker flow)."""
+        """Accept a swap offer (taker flow).
+
+        Nothing is paid here. The wallet records the swap and tells the
+        seller; the payment window then waits until the seller's MARS is
+        locked on chain and verified before it shows where to send BTC.
+        """
+        from electrum_mars.atomic_swap_htlc import BTC_TIMELOCK_BLOCKS
         msg = (
             f'Accept this swap offer?\n\n'
             f'You send: {offer.btc_amount:.8f} BTC\n'
             f'You receive: {offer.mars_amount:.4f} MARS\n'
             f'Rate: {offer.rate:.8f} BTC/MARS\n\n'
-            f'You will need to send BTC to a generated HTLC address. '
-            f'The swap will complete automatically once confirmed.'
+            f'Your wallet first waits for the seller to lock the MARS on the '
+            f'Marscoin blockchain and checks it. Only then does it show you '
+            f'where to send BTC.'
         )
         reply = QMessageBox.question(self, 'Accept Offer', msg,
                                      QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
+        if offer.is_expired():
+            QMessageBox.warning(self, 'Offer expired',
+                                'This offer has expired. Refresh the list and try again.')
+            return
 
-        # Get current BTC block height from mempool.space
-        btc_height = 850000
-        try:
-            from electrum_mars.btc_monitor import BtcMonitor
-            monitor = BtcMonitor()
-            import asyncio
-            loop = asyncio.get_event_loop()
-            h = loop.run_until_complete(monitor.get_block_height())
-            if h:
-                btc_height = h
-        except Exception:
-            pass
+        # Current heights. Never guess: a wrong Bitcoin height would put the
+        # BTC refund in the past or the far future.
+        btc_height = _fetch_btc_height(self.engine.btc_monitor.base_url)
+        mars_height = self.engine.network.get_local_height() if self.engine.network else 0
+        if not btc_height or not mars_height:
+            QMessageBox.warning(self, 'Network unavailable',
+                                'Could not read the current Bitcoin and Marscoin block '
+                                'heights. Check your connection and try again.')
+            return
+        btc_locktime = btc_height + BTC_TIMELOCK_BLOCKS
+        problem = (refund_order_problem(offer.mars_locktime, mars_height, btc_locktime, btc_height)
+                   or btc_window_problem(btc_locktime, btc_height))
+        if problem:
+            QMessageBox.warning(self, 'Unsafe offer',
+                                f'This offer is not safe to take: {problem}.')
+            return
 
         swap = self.engine.create_taker_swap(
             mars_amount_sat=offer.mars_amount_sat,
@@ -688,34 +745,47 @@ class AtomicSwapTab(QWidget):
             current_btc_height=btc_height,
         )
 
-        # Notify the maker that we accepted the offer — they need our
-        # pubkey to build the MARS HTLC script and fund it.
-        if self.engine.network:
+        # Tell the maker we accepted — they need our pubkey to build and
+        # fund the MARS lockbox. The relay may refuse (offer just taken,
+        # or limits on this connection); then there is nothing to pay.
+        refused = None
+        interface = self.engine.network.interface if self.engine.network else None
+        if interface is None:
+            refused = 'not connected to a Marscoin server'
+        else:
+            acceptance = {
+                'taker_pubkey': swap.my_pubkey,
+                'btc_htlc_address': swap.btc_htlc_address,
+                'btc_locktime': swap.btc_locktime,
+                'timestamp': time.time(),
+            }
             try:
-                acceptance = {
-                    'taker_pubkey': swap.my_pubkey,
-                    'btc_htlc_address': swap.btc_htlc_address,
-                    'btc_locktime': swap.btc_locktime,
-                    'timestamp': time.time(),
-                }
-                interface = self.engine.network.interface
-                if interface:
-                    coro = interface.session.send_request(
-                        'atomicswap.accept_offer',
-                        [offer.offer_id, acceptance])
-                    self.engine.network.run_from_another_thread(coro)
-                    _logger.info(f'Sent acceptance for offer {offer.offer_id[:8]}')
+                self.engine.network.run_from_another_thread(
+                    interface.session.send_request(
+                        'atomicswap.accept_offer', [offer.offer_id, acceptance]))
+                _logger.info(f'Sent acceptance for offer {offer.offer_id[:8]}')
             except Exception as e:
-                _logger.warning(f'Could not send acceptance: {e}')
+                refused = getattr(e, 'message', None) or str(e) or 'the server refused'
+        if refused:
+            swap.state = SwapState.FAILED.value
+            swap.error_msg = f'Not accepted: {refused}'
+            self.engine.db.save(swap)
+            QMessageBox.warning(self, 'Could not accept offer',
+                                f'Could not accept this offer: {refused}.\nNothing was paid.')
+            self._refresh_all()
+            return
 
         # Remove the accepted offer from the local order book so it
         # no longer shows in Available Offers with an active Accept button
         self.orderbook.remove_offer(offer.offer_id)
 
-        # Show BTC HTLC address with QR code
-        d = BtcPaymentDialog(self, swap)
-        d.exec_()
+        self._show_payment(swap)
+        self._refresh_all()
 
+    def _show_payment(self, swap: SwapData):
+        """Open the payment window for a taker swap."""
+        d = BtcPaymentDialog(self, swap, engine=self.engine)
+        d.exec_()
         self._refresh_all()
 
     def _import_offers(self):
@@ -758,7 +828,7 @@ class CreateOfferDialog(QDialog):
         """Fetch current market price from price.marscoin.org."""
         try:
             import urllib.request, json
-            headers = {'User-Agent': 'Electrum-Mars/4.3.2'}
+            headers = {'User-Agent': 'Electrum-Mars'}
             req = urllib.request.Request(
                 'https://price.marscoin.org/json', headers=headers)
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -1197,56 +1267,150 @@ class AutoMakerDialog(QDialog):
 
 
 class BtcPaymentDialog(QDialog):
-    """Shows the BTC HTLC address with QR code for the taker to send BTC.
+    """Payment window for the taker.
 
-    Monitors mempool.space in the background to detect when the user
-    has actually sent the BTC, then updates the UI live without the
-    user needing to refresh anything.
+    The seller locks MARS first. Until the swap worker has checked that
+    lock (right lockbox, full amount, confirmed, proven against our own
+    Marscoin headers) this window only shows progress, never a Bitcoin
+    address. Once verified it shows where to send BTC and then watches
+    mempool.space, updating live as the payment arrives.
     """
 
-    # Signals from the background polling thread
-    payment_detected = None  # set in __init__
-
-    def __init__(self, parent, swap: SwapData):
+    def __init__(self, parent, swap: SwapData, engine: Optional[SwapEngine] = None):
         QDialog.__init__(self, parent)
         self.swap = swap
+        self.engine = engine
         self.setWindowTitle('Send BTC to Complete Swap')
         self.setMinimumWidth(500)
         self._poll_thread = None
-        self._setup_ui()
-        self._start_monitoring()
+        self._phase = None
+        self._layout = QVBoxLayout(self)
+        self._panel = None
+        self._render()
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._reload)
+        self._timer.start(3000)
 
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
+    @staticmethod
+    def _phase_of(swap: SwapData) -> str:
+        if swap.state == SwapState.FAILED.value or (
+                swap.error_msg and swap.state == SwapState.CREATED.value):
+            return 'stop'
+        if swap.state == SwapState.CREATED.value and not swap.mars_verified:
+            return 'wait'
+        return 'pay'
 
+    def _reload(self):
+        if self.engine is None:
+            return
+        fresh = self.engine.get_swap(self.swap.swap_id)
+        if fresh is not None:
+            self.swap = fresh
+            self._render()
+
+    def _render(self):
+        phase = self._phase_of(self.swap)
+        if phase == self._phase:
+            if phase == 'wait':
+                self.wait_status.setText(self.swap.verify_status
+                                         or 'Waiting for the seller to lock MARS…')
+            return
+        self._phase = phase
+        if self._panel is not None:
+            self._panel.setParent(None)
+            self._panel.deleteLater()
+        self._panel = QWidget()
+        self._layout.addWidget(self._panel)
+        {'wait': self._build_wait, 'stop': self._build_stop,
+         'pay': self._build_pay}[phase](QVBoxLayout(self._panel))
+        if phase == 'pay':
+            self._start_monitoring()
+        else:
+            self._stop_monitoring()
+        self._fit_height()
+
+    def _fit_height(self):
+        # Word-wrapped labels need height-for-width; adjustSize() alone
+        # leaves them clipped.
+        self._panel.show()   # hidden widgets don't count in layout sizes
+        self.setMinimumHeight(0)
+        self._layout.activate()
+        h = self._layout.totalHeightForWidth(self.width())
+        if h > 0:
+            self.setMinimumHeight(h)
+            self.resize(self.width(), h)
+
+    def _build_wait(self, layout):
+        btc_amount = self.swap.btc_amount_sat / 1e8
+        mars_amount = self.swap.mars_amount_sat / 1e8
+        header = QLabel('Waiting for the seller to lock MARS')
+        header.setFont(QFont('', 14, QFont.Bold))
+        header.setAlignment(Qt.AlignCenter)
+        layout.addWidget(header)
+        info = QLabel(
+            f'The seller goes first: they lock {mars_amount:.4f} MARS in a '
+            f'lockbox on the Marscoin blockchain that only you can open.\n\n'
+            f'Your wallet checks that the lockbox matches the deal, holds the '
+            f'full amount and is confirmed. Only then does it show you where '
+            f'to send {btc_amount:.8f} BTC.\n\n'
+            f'This usually takes a few minutes. You can close this window and '
+            f'reopen it from Active Swaps.')
+        info.setWordWrap(True)
+        layout.addWidget(info)
+        self.wait_status = QLabel(self.swap.verify_status
+                                  or 'Waiting for the seller to lock MARS…')
+        self.wait_status.setAlignment(Qt.AlignCenter)
+        self.wait_status.setWordWrap(True)
+        self.wait_status.setStyleSheet(
+            "background: #e8f0fe; color: #1a3d7c; "
+            "padding: 10px; border: 1px solid #8ab4f8; "
+            "border-radius: 5px; font-size: 13px; margin-top: 10px;")
+        layout.addWidget(self.wait_status)
+        close_btn = QPushButton('Close')
+        close_btn.clicked.connect(self.reject)
+        layout.addWidget(close_btn)
+
+    def _build_stop(self, layout):
+        header = QLabel('Do not send BTC')
+        header.setFont(QFont('', 14, QFont.Bold))
+        header.setAlignment(Qt.AlignCenter)
+        header.setStyleSheet("color: #721c24;")
+        layout.addWidget(header)
+        reason = self.swap.error_msg or 'This swap was stopped.'
+        label = QLabel(reason)
+        label.setWordWrap(True)
+        label.setStyleSheet(
+            "background: #f8d7da; color: #721c24; "
+            "padding: 10px; border: 1px solid #dc3545; "
+            "border-radius: 5px; font-size: 13px;")
+        layout.addWidget(label)
+        close_btn = QPushButton('Close')
+        close_btn.clicked.connect(self.reject)
+        layout.addWidget(close_btn)
+
+    def _build_pay(self, layout):
         header = QLabel('Send BTC to this address')
         header.setFont(QFont('', 14, QFont.Bold))
         header.setAlignment(Qt.AlignCenter)
         layout.addWidget(header)
 
-        # QR Code
+        verified = QLabel('\u2714  Seller\'s MARS is locked and verified on the Marscoin blockchain.')
+        verified.setAlignment(Qt.AlignCenter)
+        verified.setWordWrap(True)
+        verified.setStyleSheet("color: #155724;")
+        layout.addWidget(verified)
+
+        # QR code (the wallet's own widget; no Pillow needed)
         try:
-            import qrcode
-            from PyQt5.QtGui import QPixmap, QImage
-            from io import BytesIO
-
-            qr = qrcode.QRCode(version=1, box_size=6, border=2)
-            qr.add_data(self.swap.btc_htlc_address)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="black", back_color="white")
-
-            buffer = BytesIO()
-            img.save(buffer, format='PNG')
-            buffer.seek(0)
-
-            qimage = QImage()
-            qimage.loadFromData(buffer.read())
-            pixmap = QPixmap.fromImage(qimage)
-
-            qr_label = QLabel()
-            qr_label.setPixmap(pixmap)
-            qr_label.setAlignment(Qt.AlignCenter)
-            layout.addWidget(qr_label)
+            from electrum_mars.gui.qt.qrcodewidget import QRCodeWidget
+            qr = QRCodeWidget(f'bitcoin:{self.swap.btc_htlc_address}'
+                              f'?amount={self.swap.btc_amount_sat / 1e8:.8f}')
+            qr.setFixedSize(220, 220)
+            row = QHBoxLayout()
+            row.addStretch(1)
+            row.addWidget(qr)
+            row.addStretch(1)
+            layout.addLayout(row)
         except Exception as e:
             layout.addWidget(QLabel(f'(QR unavailable: {e})'))
 
@@ -1267,9 +1431,11 @@ class BtcPaymentDialog(QDialog):
         info = QLabel(
             f'\nSend exactly: {btc_amount:.8f} BTC\n'
             f'You will receive: {mars_amount:.4f} MARS\n\n'
-            f'Timelock: ~6 hours (your BTC is refundable if swap fails)'
+            f'If the swap fails, your BTC can be refunded from Bitcoin block '
+            f'{self.swap.btc_locktime} (about 4 hours after you accepted).'
         )
         info.setAlignment(Qt.AlignCenter)
+        info.setWordWrap(True)
         layout.addWidget(info)
 
         # Live status bar — updates automatically as BTC arrives
@@ -1282,7 +1448,7 @@ class BtcPaymentDialog(QDialog):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
-        self.close_btn = QPushButton('Cancel — I haven\'t sent yet')
+        self.close_btn = QPushButton('Close — I haven\'t sent yet')
         self.close_btn.clicked.connect(self.reject)
         layout.addWidget(self.close_btn)
 
@@ -1311,7 +1477,7 @@ class BtcPaymentDialog(QDialog):
                 while not self._stop:
                     try:
                         req = _ur.Request(url, headers={
-                            'User-Agent': 'Electrum-Mars/4.3.2'})
+                            'User-Agent': 'Electrum-Mars'})
                         with _ur.urlopen(req, timeout=10) as resp:
                             utxos = _json.loads(resp.read())
                         if utxos:
@@ -1327,7 +1493,7 @@ class BtcPaymentDialog(QDialog):
                                         try:
                                             with _ur.urlopen(_ur.Request(
                                                 'https://mempool.space/api/blocks/tip/height',
-                                                headers={'User-Agent': 'Electrum-Mars/4.3.2'}),
+                                                headers={'User-Agent': 'Electrum-Mars'}),
                                                 timeout=5) as r:
                                                 tip = int(r.read())
                                             conf = max(1, tip - bh + 1)
@@ -1350,6 +1516,8 @@ class BtcPaymentDialog(QDialog):
                             return
                         _time.sleep(1)
 
+        if self._poll_thread is not None:
+            return
         self._poll_thread = PollThread(
             self.swap.btc_htlc_address, self.swap.btc_amount_sat)
         self._poll_thread.status.connect(self._on_status_update)
@@ -1357,6 +1525,8 @@ class BtcPaymentDialog(QDialog):
 
     def _on_status_update(self, state, confirmations, value_sat):
         """Update status label with live payment info."""
+        if self._phase != 'pay':
+            return
         btc = value_sat / 1e8
         if state == 'mempool':
             self.status_label.setText(
@@ -1394,10 +1564,21 @@ class BtcPaymentDialog(QDialog):
                 "padding: 10px; border: 1px solid #dc3545; "
                 "border-radius: 5px; font-size: 13px; margin-top: 10px;")
 
-    def closeEvent(self, event):
+    def _stop_monitoring(self):
         if self._poll_thread:
             self._poll_thread.stop()
             self._poll_thread.wait(1000)
+            self._poll_thread = None
+
+    def done(self, result):
+        # reject()/accept() don't send a closeEvent, so stop work here.
+        self._timer.stop()
+        self._stop_monitoring()
+        super().done(result)
+
+    def closeEvent(self, event):
+        self._timer.stop()
+        self._stop_monitoring()
         super().closeEvent(event)
 
     def _copy(self, text):
@@ -1485,7 +1666,7 @@ class BtcRefundDialog(QDialog):
         try:
             req = urllib.request.Request(
                 'https://mempool.space/api/blocks/tip/height',
-                headers={'User-Agent': 'Electrum-Mars/4.3.2'})
+                headers={'User-Agent': 'Electrum-Mars'})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 current_height = int(resp.read())
         except Exception as e:

@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Optional
 
 from electrum_mars.logging import get_logger
 from .swap_engine import SwapEngine, SwapState, SwapRole, SwapData
+from .safety import (btc_window_problem, expected_mars_htlc, maker_claim_problem,
+                     refund_order_problem)
 
 if TYPE_CHECKING:
     from electrum_mars.network import Network
@@ -55,6 +57,8 @@ class SwapWorker:
         self._running = False
         # Track in-flight operations so we don't double-process
         self._in_flight = set()
+        # Acceptances we refused, so we report each only once
+        self._refused = set()
 
     def start(self):
         """Start the background worker loop."""
@@ -130,6 +134,10 @@ class SwapWorker:
 
     async def _handle_expired(self, swap: SwapData):
         """Handle an expired swap: attempt refund if possible."""
+        if (swap.role == SwapRole.MAKER.value and swap.mars_funding_txid
+                and not swap.btc_funding_txid):
+            # The taker accepted, we locked MARS, and no BTC ever came.
+            await self._report_abandoned(swap.swap_id)
         if swap.role == SwapRole.MAKER.value and swap.mars_funding_txid:
             if swap.state not in (SwapState.BTC_CLAIMED.value,
                                    SwapState.COMPLETED.value):
@@ -153,6 +161,25 @@ class SwapWorker:
                 acceptance = await self._check_for_acceptance(swap)
                 if not acceptance:
                     return  # still waiting
+                refusal_key = (swap.swap_id, acceptance.get('taker_pubkey'),
+                               acceptance.get('btc_locktime'))
+                if refusal_key in self._refused:
+                    return
+                # Before locking anything, check the taker's BTC refund
+                # time. A refund that opens too soon would let a taker
+                # refund the BTC and still claim the MARS.
+                btc_height = await self.engine.btc_monitor.get_block_height()
+                network = self.engine.network
+                mars_height = network.get_local_height() if network else 0
+                if not btc_height or not mars_height:
+                    return  # can't check yet; try again next tick
+                problem = self._acceptance_problem(swap, acceptance, btc_height, mars_height)
+                if problem:
+                    _logger.warning(
+                        f"Maker {swap.swap_id[:8]}: refusing acceptance: {problem}")
+                    self._refused.add(refusal_key)
+                    await self._report_abandoned(swap.swap_id)
+                    return
                 # Got an acceptance — record the taker's pubkey and
                 # have the engine build the MARS HTLC
                 self.engine.set_peer_info(swap.swap_id, acceptance['taker_pubkey'])
@@ -227,7 +254,16 @@ class SwapWorker:
                     f"txid={result['txid']}")
 
         elif state == SwapState.BTC_LOCKED.value:
-            # We can claim the BTC now (reveals preimage on chain)
+            # We can claim the BTC now (reveals preimage on chain), unless
+            # the BTC refund is so close that our claim might not confirm
+            # first. Then we let the swap unwind and refund the MARS later.
+            if not swap.btc_claim_txid:
+                btc_height = await self.engine.btc_monitor.get_block_height()
+                problem = maker_claim_problem(swap.btc_locktime, btc_height)
+                if problem:
+                    _logger.warning(
+                        f"Maker {swap.swap_id[:8]}: not claiming BTC: {problem}")
+                    return
             self._in_flight.add(swap.swap_id)
             try:
                 await self.engine.claim_btc(swap.swap_id)
@@ -242,8 +278,13 @@ class SwapWorker:
         state = swap.state
 
         if state == SwapState.CREATED.value:
-            # Taker has accepted offer and (probably) sent BTC to the
-            # HTLC address via an external wallet. Check if it landed.
+            # First prove the maker's MARS is locked where we expect it.
+            # The UI only shows the BTC address once this succeeds.
+            if not swap.mars_verified:
+                swap = await self.engine.verify_taker_mars_lock(swap.swap_id)
+                if swap is None or swap.state != SwapState.CREATED.value:
+                    return
+            # Check whether the BTC payment has landed (sent from any wallet).
             result = await self.engine.btc_monitor.check_htlc_funded(
                 swap.btc_htlc_address,
                 swap.btc_amount_sat,
@@ -257,6 +298,13 @@ class SwapWorker:
                 _logger.info(
                     f"Taker {swap.swap_id[:8]}: BTC sent to HTLC, "
                     f"txid={result['txid']}")
+            elif swap.mars_verified and not swap.error_msg:
+                # Not paid yet. Stop showing the address once too little
+                # time is left for the seller to claim before the refund.
+                btc_height = await self.engine.btc_monitor.get_block_height()
+                problem = btc_window_problem(swap.btc_locktime, btc_height) if btc_height else None
+                if problem:
+                    await self.engine._fail_taker(swap, problem)
 
         elif state == SwapState.BTC_LOCKED.value:
             # Wait for the maker to claim BTC (which reveals preimage).
@@ -350,44 +398,26 @@ class SwapWorker:
 
     async def _claim_mars_now(self, swap: SwapData, preimage: bytes):
         """Claim the MARS HTLC using the revealed preimage."""
-        from electrum_mars.atomic_swap_htlc import (
-            create_claim_tx, create_htlc_script,
-            htlc_to_p2wsh_address, Chain)
+        from electrum_mars.atomic_swap_htlc import create_claim_tx
         from electrum_mars.util import bfh
 
-        # The offer was published BEFORE the maker knew the taker's pubkey,
-        # so mars_htlc_script and mars_htlc_address were empty in the offer.
-        # The taker stored these empty values. We must recompute both from
-        # the known parameters: payment_hash160, both pubkeys, mars_locktime.
-        if not swap.mars_htlc_script:
-            # In the MARS HTLC:
-            #   recipient = taker (my_pubkey) — they claim MARS
-            #   sender = maker (peer_pubkey) — they can refund
-            mars_script = create_htlc_script(
-                payment_hash160=bfh(swap.payment_hash160),
-                recipient_pubkey=bfh(swap.my_pubkey),
-                sender_pubkey=bfh(swap.peer_pubkey),
-                locktime=swap.mars_locktime,
-            )
+        # Always rebuild the lockbox from values we know: the hash, both
+        # pubkeys and the MARS refund height. The offer's copy (empty, or
+        # whatever the maker sent) is never trusted. Taker claims with the
+        # secret; the maker can refund after the locktime.
+        mars_script, mars_addr = expected_mars_htlc(
+            swap.payment_hash160, swap.my_pubkey, swap.peer_pubkey, swap.mars_locktime)
+        if swap.mars_htlc_script != mars_script.hex() or swap.mars_htlc_address != mars_addr:
             swap.mars_htlc_script = mars_script.hex()
-            swap.mars_htlc_address = htlc_to_p2wsh_address(
-                mars_script, Chain.MARS)
-            self.engine.db.save(swap)
-            print(f"[SwapWorker] Recomputed MARS HTLC script + addr: "
-                  f"{swap.mars_htlc_address[:25]}...")
-
-        if not swap.mars_htlc_address and swap.mars_htlc_script:
-            mars_addr = htlc_to_p2wsh_address(
-                bfh(swap.mars_htlc_script), Chain.MARS)
             swap.mars_htlc_address = mars_addr
             self.engine.db.save(swap)
-            print(f"[SwapWorker] Computed missing MARS HTLC addr: "
-                  f"{mars_addr[:25]}...")
 
-        # We need the MARS HTLC funding info. In the taker flow, we got
-        # mars_htlc_address from the offer. We need to find the funding
-        # txid by querying the MARS chain.
-        mars_funding = await self._find_mars_htlc_funding(swap)
+        # Use the funding output proven during verification; swaps started
+        # by an older version fall back to searching the MARS chain.
+        if swap.mars_verified and swap.mars_funding_txid:
+            mars_funding = {'txid': swap.mars_funding_txid, 'vout': swap.mars_funding_vout}
+        else:
+            mars_funding = await self._find_mars_htlc_funding(swap)
         if not mars_funding:
             _logger.warning(
                 f"Taker {swap.swap_id[:8]}: can't find MARS HTLC funding tx yet")
@@ -465,7 +495,8 @@ class SwapWorker:
                         from electrum_mars.transaction import Transaction
                         tx = Transaction(tx_hex)
                         for i, o in enumerate(tx.outputs()):
-                            if o.value >= swap.mars_amount_sat:
+                            if (o.address == swap.mars_htlc_address
+                                    and o.value >= swap.mars_amount_sat):
                                 print(f"[SwapWorker] repair: found funding "
                                       f"txid={txid[:16]}... vout={i} "
                                       f"value={o.value}")
@@ -479,6 +510,36 @@ class SwapWorker:
 
         print(f"[SwapWorker] _find_mars_htlc_funding: ALL METHODS FAILED")
         return None
+
+    @staticmethod
+    def _acceptance_problem(swap: SwapData, acceptance: dict,
+                            btc_height: int, mars_height: int) -> Optional[str]:
+        """Maker: why an acceptance is unsafe to act on, or None."""
+        btc_locktime = acceptance.get('btc_locktime')
+        if not isinstance(btc_locktime, int) or isinstance(btc_locktime, bool) \
+                or btc_locktime <= 0:
+            return 'acceptance has no valid BTC refund height'
+        return (btc_window_problem(btc_locktime, btc_height)
+                or refund_order_problem(swap.mars_locktime, mars_height,
+                                        btc_locktime, btc_height))
+
+    async def _report_abandoned(self, offer_id: str):
+        """Tell the relay servers a taker abandoned or abused this offer.
+        Servers without the RPC (older ElectrumX) just ignore it."""
+        network = self.engine.network
+        if network is None:
+            return
+        try:
+            with network.interfaces_lock:
+                interfaces = list(network.interfaces.values())
+        except Exception:
+            return
+        for iface in interfaces:
+            try:
+                await iface.session.send_request(
+                    'atomicswap.report_abandoned', [offer_id], timeout=10)
+            except Exception:
+                pass
 
     def _get_password(self) -> Optional[str]:
         """Get the wallet password if needed for signing."""
