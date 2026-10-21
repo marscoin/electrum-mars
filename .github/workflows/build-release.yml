@@ -192,7 +192,9 @@ jobs:
 
   # ─── macOS Intel ─────────────────────────────────────────────────
   macos:
-    runs-on: macos-latest
+    # Homebrew bottles target the runner's macOS. Build on 14 so the app
+    # runs on macOS 14 and newer, not only on the newest release.
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
         with:
@@ -238,6 +240,11 @@ jobs:
           codesign -s - -f dist/Electrum-Mars.app/Contents/Frameworks/libcrypto.3.dylib
           codesign -s - -f dist/Electrum-Mars.app/Contents/Frameworks/libssl.3.dylib
           codesign -s - -f --deep dist/Electrum-Mars.app
+
+      - name: Make the app portable
+        # Point Homebrew library references inside the app, then fail if
+        # anything still refers to the build machine or needs macOS > 14.
+        run: contrib/osx/make_portable.sh dist/Electrum-Mars.app 14.0
 
       - name: Smoke test (app starts)
         run: dist/Electrum-Mars.app/Contents/MacOS/run_electrum --offline -D "$RUNNER_TEMP/em-data" version
