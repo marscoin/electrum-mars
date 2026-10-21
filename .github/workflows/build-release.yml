@@ -136,7 +136,7 @@ jobs:
           git clone --depth 1 https://github.com/bitcoin-core/secp256k1.git
           cd secp256k1
           mkdir build && cd build
-          cmake -G "Visual Studio 17 2022" -A x64 -DSECP256K1_BUILD_TESTS=OFF -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF -DSECP256K1_BUILD_BENCHMARK=OFF -DSECP256K1_ENABLE_MODULE_RECOVERY=ON ..
+          cmake -A x64 -DSECP256K1_BUILD_TESTS=OFF -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF -DSECP256K1_BUILD_BENCHMARK=OFF -DSECP256K1_ENABLE_MODULE_RECOVERY=ON ..
           cmake --build . --config Release
           cp Release/secp256k1.dll ../../electrum_mars/libsecp256k1-0.dll || true
           # Also try other output locations
