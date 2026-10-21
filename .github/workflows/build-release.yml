@@ -81,6 +81,9 @@ jobs:
             --collect-submodules pkg_resources \
             run_electrum
 
+      - name: Smoke test (binary starts)
+        run: dist/electrum-mars/electrum-mars --offline -D "$RUNNER_TEMP/em-data" version
+
       - name: Download AppImage tool
         run: |
           wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -O appimagetool
@@ -173,6 +176,9 @@ jobs:
             --collect-submodules pkg_resources `
             run_electrum
 
+      - name: Smoke test (binary starts)
+        run: dist/electrum-mars/electrum-mars.exe --offline -D "$env:RUNNER_TEMP/em-data" version
+
       - name: Create portable zip
         run: Compress-Archive -Path dist/electrum-mars -DestinationPath "Electrum-Mars-${{ env.ELECTRUM_VERSION }}-portable-win64.zip"
 
@@ -230,6 +236,9 @@ jobs:
           codesign -s - -f dist/Electrum-Mars.app/Contents/Frameworks/libcrypto.3.dylib
           codesign -s - -f dist/Electrum-Mars.app/Contents/Frameworks/libssl.3.dylib
           codesign -s - -f --deep dist/Electrum-Mars.app
+
+      - name: Smoke test (app starts)
+        run: dist/Electrum-Mars.app/Contents/MacOS/run_electrum --offline -D "$RUNNER_TEMP/em-data" version
 
       - name: Create DMG
         run: |
