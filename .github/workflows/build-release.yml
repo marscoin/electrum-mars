@@ -192,9 +192,10 @@ jobs:
 
   # ─── macOS Intel ─────────────────────────────────────────────────
   macos:
-    # Homebrew bottles target the runner's macOS. Build on 14 so the app
-    # runs on macOS 14 and newer, not only on the newest release.
-    runs-on: macos-14
+    # Homebrew bottles target the runner's macOS, so the app needs at least
+    # the runner's version. GitHub retired the macOS 14 runner in 2026; 15 is
+    # the oldest one available.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
