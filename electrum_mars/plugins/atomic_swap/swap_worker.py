@@ -40,6 +40,7 @@ _logger = get_logger(__name__)
 
 # How often the worker wakes up to check swaps
 POLL_INTERVAL_SEC = 30
+EXPIRED_AGE_SEC = 8 * 3600   # unaccepted offers and taker swaps stop being polled
 
 
 class SwapWorker:
@@ -124,13 +125,20 @@ class SwapWorker:
                     f"SwapWorker error advancing {swap.swap_id[:8]}: {e}")
 
     def _is_expired(self, swap: SwapData) -> bool:
-        """Check if the swap's timelock has passed."""
-        # We don't have absolute block heights to compare directly at tick time
-        # without a network call; use a conservative wall-clock cutoff: if the
-        # swap is older than ~8 hours (BTC timelock is 6h), it's definitely
-        # past the point where normal flow can complete.
+        """Check if the swap is past the point where normal flow can complete."""
+        # A maker with MARS locked is done when its own refund height is
+        # reached, whatever the lock length was (234 blocks for swaps made
+        # by older versions, MARS_MAKER_TIMELOCK_BLOCKS now). Until then it
+        # must keep advancing the swap, and a refund would be rejected.
+        if (swap.role == SwapRole.MAKER.value and swap.mars_funding_txid
+                and swap.mars_locktime):
+            network = self.engine.network
+            mars_height = network.get_local_height() if network else 0
+            return bool(mars_height) and mars_height >= swap.mars_locktime
+        # Everything else (unaccepted offers, takers): a wall-clock cutoff,
+        # well past the 4 h BTC refund.
         age = time.time() - swap.created_at
-        return age > 8 * 3600
+        return age > EXPIRED_AGE_SEC
 
     async def _handle_expired(self, swap: SwapData):
         """Handle an expired swap: attempt refund if possible."""

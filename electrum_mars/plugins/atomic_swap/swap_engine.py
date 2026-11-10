@@ -27,7 +27,7 @@ from electrum_mars.atomic_swap_htlc import (
     generate_preimage, generate_keypair, create_htlc_script,
     htlc_to_p2wsh_address, create_funding_tx, create_claim_tx,
     create_refund_tx, verify_htlc_script, extract_preimage_from_witness,
-    Chain, BTC_TIMELOCK_BLOCKS, MARS_TIMELOCK_BLOCKS,
+    Chain, BTC_TIMELOCK_BLOCKS, MARS_MAKER_TIMELOCK_BLOCKS,
 )
 from electrum_mars.btc_monitor import BtcMonitor
 from electrum_mars.crypto import hash_160
@@ -246,7 +246,7 @@ class SwapEngine:
         preimage, payment_hash = generate_preimage()
         my_priv, my_pub = generate_keypair()
 
-        mars_locktime = current_mars_height + MARS_TIMELOCK_BLOCKS
+        mars_locktime = current_mars_height + MARS_MAKER_TIMELOCK_BLOCKS
 
         swap = SwapData(
             swap_id=swap_id,

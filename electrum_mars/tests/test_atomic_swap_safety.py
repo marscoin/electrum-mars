@@ -1,12 +1,14 @@
 import asyncio
+import time
 from types import SimpleNamespace
 
 from electrum_mars.atomic_swap_htlc import (
-    BTC_TIMELOCK_BLOCKS, MARS_TIMELOCK_BLOCKS, Chain, create_htlc_script,
+    BTC_TIMELOCK_BLOCKS, MARS_MAKER_TIMELOCK_BLOCKS, MARS_TIMELOCK_BLOCKS, Chain,
+    create_htlc_script,
     generate_keypair, generate_preimage, htlc_to_p2wsh_address)
 from electrum_mars.crypto import sha256, sha256d
 from electrum_mars.plugins.atomic_swap import safety
-from electrum_mars.plugins.atomic_swap.swap_engine import SwapEngine, SwapState
+from electrum_mars.plugins.atomic_swap.swap_engine import SwapEngine, SwapRole, SwapState
 from electrum_mars.plugins.atomic_swap.swap_worker import SwapWorker
 
 from . import ElectrumTestCase
@@ -24,6 +26,19 @@ class TestRefundClocks(ElectrumTestCase):
     def test_fresh_offer_is_safe(self):
         self.assertIsNone(safety.refund_order_problem(
             MARS_H + MARS_TIMELOCK_BLOCKS, MARS_H, BTC_H + BTC_TIMELOCK_BLOCKS, BTC_H))
+
+    def test_longer_maker_lock_passes_the_taker_check(self):
+        # What makers lock now; takers (this and older versions) accept it.
+        self.assertIsNone(safety.refund_order_problem(
+            MARS_H + MARS_MAKER_TIMELOCK_BLOCKS, MARS_H, BTC_H + BTC_TIMELOCK_BLOCKS, BTC_H))
+
+    def test_maker_lock_outlasts_btc_refund_in_a_block_burst(self):
+        # Mainnet, 2026-11-10: the fastest 234-block stretch took ~3.96 h.
+        burst_block_sec = 3.96 * 3600 / 234
+        btc_refund = BTC_TIMELOCK_BLOCKS * safety.BTC_BLOCK_SEC * safety.BTC_SLOW
+        self.assertLess(MARS_TIMELOCK_BLOCKS * burst_block_sec, btc_refund)   # why 234 was too short
+        self.assertGreater(MARS_MAKER_TIMELOCK_BLOCKS * burst_block_sec,
+                           btc_refund + safety.MIN_REFUND_GAP_SEC)
 
     def test_offer_aged_an_hour_is_unsafe(self):
         # ~29 Marscoin blocks per hour eat into the margin.
@@ -309,13 +324,17 @@ class TestTakerVerification(ElectrumTestCase):
 
 class TestMakerAcceptance(ElectrumTestCase):
 
-    def check(self, btc_locktime, mars_locktime=MARS_H + MARS_TIMELOCK_BLOCKS):
+    def check(self, btc_locktime, mars_locktime=MARS_H + MARS_MAKER_TIMELOCK_BLOCKS):
         swap = SimpleNamespace(mars_locktime=mars_locktime)
         return SwapWorker._acceptance_problem(
             swap, {'btc_locktime': btc_locktime}, BTC_H, MARS_H)
 
     def test_normal_acceptance(self):
         self.assertIsNone(self.check(BTC_H + BTC_TIMELOCK_BLOCKS))
+
+    def test_normal_acceptance_of_an_offer_made_before_the_upgrade(self):
+        self.assertIsNone(self.check(BTC_H + BTC_TIMELOCK_BLOCKS,
+                                     mars_locktime=MARS_H + MARS_TIMELOCK_BLOCKS))
 
     def test_refund_too_soon(self):
         self.assertIsNotNone(self.check(BTC_H + 5))
@@ -326,3 +345,60 @@ class TestMakerAcceptance(ElectrumTestCase):
     def test_garbage(self):
         for bad in (None, '900024', 0, -1, True, 900024.0):
             self.assertIsNotNone(self.check(bad), bad)
+
+
+# ---------------------------------------------------------------- maker lock length and expiry
+
+class TestMakerLock(ElectrumTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.network = FakeNetwork(MARS_H)
+        self.engine = SwapEngine(None, self.network, self.electrum_path)
+        self.worker = SwapWorker(self.engine)
+
+    def maker_swap(self, age_hours=0.0, funded=True):
+        swap = self.engine.create_maker_swap(MARS_SAT, BTC_SAT, MARS_H)
+        swap.created_at = time.time() - age_hours * 3600
+        if funded:
+            swap.mars_funding_txid = '00' * 32
+        return swap
+
+    def test_maker_locks_for_the_maker_timelock(self):
+        swap = self.maker_swap()
+        self.assertEqual(MARS_H + MARS_MAKER_TIMELOCK_BLOCKS, swap.mars_locktime)
+        self.assertEqual(480, MARS_MAKER_TIMELOCK_BLOCKS)
+        self.assertEqual(234, MARS_TIMELOCK_BLOCKS)   # older makers; takers still accept it
+
+    def test_funded_maker_swap_is_not_expired_before_its_refund_height(self):
+        # 10 hours old: past the old 8-hour cutoff, but the MARS refund is
+        # still closed, so the maker must keep working on the swap.
+        swap = self.maker_swap(age_hours=10)
+        self.network.height = swap.mars_locktime - 1
+        self.assertFalse(self.worker._is_expired(swap))
+
+    def test_funded_maker_swap_expires_at_its_refund_height(self):
+        swap = self.maker_swap(age_hours=1)
+        self.network.height = swap.mars_locktime
+        self.assertTrue(self.worker._is_expired(swap))
+
+    def test_swap_locked_by_an_older_version_expires_at_its_own_height(self):
+        swap = self.maker_swap(age_hours=9)
+        swap.mars_locktime = MARS_H + MARS_TIMELOCK_BLOCKS
+        self.network.height = MARS_H + MARS_TIMELOCK_BLOCKS - 1
+        self.assertFalse(self.worker._is_expired(swap))
+        self.network.height = MARS_H + MARS_TIMELOCK_BLOCKS
+        self.assertTrue(self.worker._is_expired(swap))
+
+    def test_funded_maker_swap_without_a_height_is_not_expired(self):
+        swap = self.maker_swap(age_hours=30)
+        self.network.height = 0
+        self.assertFalse(self.worker._is_expired(swap))
+
+    def test_unaccepted_offer_and_taker_swap_keep_the_wall_clock_cutoff(self):
+        self.assertFalse(self.worker._is_expired(self.maker_swap(age_hours=7, funded=False)))
+        self.assertTrue(self.worker._is_expired(self.maker_swap(age_hours=9, funded=False)))
+        taker = SimpleNamespace(role=SwapRole.TAKER.value, mars_funding_txid='00' * 32,
+                                mars_locktime=MARS_H + MARS_MAKER_TIMELOCK_BLOCKS,
+                                created_at=time.time() - 9 * 3600)
+        self.assertTrue(self.worker._is_expired(taker))
