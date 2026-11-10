@@ -244,8 +244,8 @@ jobs:
 
       - name: Make the app portable
         # Point Homebrew library references inside the app, then fail if
-        # anything still refers to the build machine or needs macOS > 14.
-        run: contrib/osx/make_portable.sh dist/Electrum-Mars.app 14.0
+        # anything still refers to the build machine or needs macOS > 15.
+        run: contrib/osx/make_portable.sh dist/Electrum-Mars.app 15.0
 
       - name: Smoke test (app starts)
         run: dist/Electrum-Mars.app/Contents/MacOS/run_electrum --offline -D "$RUNNER_TEMP/em-data" version
