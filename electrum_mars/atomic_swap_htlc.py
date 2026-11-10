@@ -43,14 +43,22 @@ _logger = get_logger(__name__)
 # - Taker funds BTC second  -> BTC locktime must be LOWER
 # - Maker funds MARS first  -> MARS locktime must be HIGHER
 #
-# 4h BTC / 8h MARS gives a 4-hour safety gap between the two refund
-# windows. This is generous enough to tolerate Bitcoin mempool
-# congestion during fee spikes (the maker's claim tx has ~4 hours
-# after their theoretical worst-case broadcast time to confirm)
-# while keeping the taker's recovery window short (4 hours) so a
-# stalled swap feels tolerable rather than catastrophic.
-BTC_TIMELOCK_BLOCKS = 24     # ~4 hours at 10 min/block
-MARS_TIMELOCK_BLOCKS = 234   # ~8 hours at 123 sec/block
+# The taker's recovery window stays short (4 hours) so a stalled swap
+# feels tolerable rather than catastrophic.
+#
+# Marscoin blocks come in bursts. Measured on mainnet on 2026-11-10,
+# the fastest 234-block stretch of the previous 5000 blocks took about
+# 3.96 hours (the long-run average is on target). A 234-block MARS lock
+# could therefore open before the 4-hour BTC refund. Makers now lock
+# for 480 blocks (~16 hours at target, ~8 hours in such a burst).
+#
+# Step 1 of 2: only what makers CREATE changes. Takers still accept
+# offers from older makers that lock for MARS_TIMELOCK_BLOCKS; the
+# taker-side minimum (plugins/atomic_swap/safety.py) is tightened in a
+# later release, once makers have upgraded.
+BTC_TIMELOCK_BLOCKS = 24            # ~4 hours at 10 min/block
+MARS_TIMELOCK_BLOCKS = 234          # ~8 hours at 123 sec/block: older makers' lock
+MARS_MAKER_TIMELOCK_BLOCKS = 480    # ~16 hours at 123 sec/block: what we lock as maker
 
 # Bitcoin bech32 HRPs
 BTC_SEGWIT_HRP = "bc"

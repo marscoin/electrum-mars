@@ -222,9 +222,18 @@ in both makes the swap atomic.
 Defined in `atomic_swap_htlc.py`:
 
 ```python
-BTC_TIMELOCK_BLOCKS  = 24    # ~4 hours at 10 min/block
-MARS_TIMELOCK_BLOCKS = 234   # ~8 hours at 123 sec/block
+BTC_TIMELOCK_BLOCKS        = 24    # ~4 hours at 10 min/block
+MARS_TIMELOCK_BLOCKS       = 234   # ~8 hours at 123 sec/block: older makers' lock
+MARS_MAKER_TIMELOCK_BLOCKS = 480   # ~16 hours at 123 sec/block: what makers lock now
 ```
+
+Makers lock for `MARS_MAKER_TIMELOCK_BLOCKS`. Marscoin blocks come in
+bursts: on mainnet on 2026-11-10 the fastest 234-block stretch of the
+previous 5000 blocks took about 3.96 hours, so a 234-block lock could
+open before the 4-hour Bitcoin refund. 480 blocks take about 8 hours
+even at that pace. This is step 1 of 2: takers still accept offers from
+older makers that lock for 234 blocks, and the taker-side minimum
+(`safety.py`) is unchanged until makers have upgraded.
 
 ### The safety rule
 
@@ -244,12 +253,14 @@ and construct a MARS claim. The taker would lose BTC and not gain MARS.
 
 ### The gap
 
-With `BTC = 4h` and `MARS = 8h`, the gap is **4 hours**. This is a
-deliberate sweet-spot between user experience and safety margin:
+With `BTC = 4h` and `MARS = 16h`, the gap is about **12 hours** at target
+block times, and about 4 hours if Marscoin blocks arrive twice as fast
+as the target for the whole lock. The trade-off between user experience
+and safety margin:
 
-- **User experience**: A user with a stalled swap recovers their BTC in
-  4 hours — annoying but not catastrophic. Worst case recovery (both
-  sides) is 8 hours, all within a single day.
+- **User experience**: A buyer with a stalled swap recovers their BTC in
+  4 hours — annoying but not catastrophic. A seller whose buyer never
+  pays waits about 16 hours for the MARS.
 - **Safety margin**: 4 hours is comfortable under all normal Bitcoin
   conditions. Even during moderate fee congestion, a claim tx at
   `halfHourFee` rates will confirm well within an hour; the maker has
@@ -262,7 +273,7 @@ deliberate sweet-spot between user experience and safety margin:
 
 A future version may implement dynamic timelocks that adjust based on
 observed fee conditions, but for a human-scale P2P swap network the
-static 4h/8h values are a practical sweet spot.
+static 4h/16h values are a practical choice.
 
 ### What "refundable" means on each chain
 
@@ -509,8 +520,10 @@ processed) to prevent the same tick from double-processing a swap.
 
 ### Expiration handling
 
-A swap older than 8 hours with remaining funds triggers `_handle_expired`
-which attempts automatic refunds where applicable. The user can also
+A maker swap with MARS locked expires when the Marscoin chain reaches its
+own `mars_locktime` (whatever lock length it was created with);
+`_handle_expired` then refunds the MARS automatically. Unaccepted offers
+and taker swaps stop being polled after 8 hours of wall-clock time. The user can also
 refund manually via the UI at any time past the locktime.
 
 ---
@@ -557,7 +570,8 @@ Refunds are only needed when the happy path fails. In practice:
 - **Taker sent BTC but maker never claimed** → taker refunds BTC after
   `BTC_TIMELOCK_BLOCKS` (4 hours)
 - **Maker locked MARS but taker never sent BTC** → maker refunds MARS
-  after `MARS_TIMELOCK_BLOCKS` (8 hours)
+  after `MARS_MAKER_TIMELOCK_BLOCKS` (about 16 hours; 8 hours for swaps
+  locked by older versions)
 
 ### How the taker refunds BTC
 
@@ -725,7 +739,7 @@ Every path listed below is backed by real code — no stubs, no placeholders.
 | Taker: extract preimage | `_check_for_preimage()` | `swap_worker.py:267-288` | Scans BTC HTLC address spending txs for witness with 32-byte preimage |
 | Taker: auto-claim MARS | `_claim_mars_now()` | `swap_worker.py:290-327` | Queries MARS chain for HTLC UTXO → `create_claim_tx()` → `network.broadcast_transaction()` |
 | Taker: find MARS funding | `_find_mars_htlc_funding()` | `swap_worker.py:329-350` | `blockchain.scripthash.listunspent` on MARS HTLC address |
-| Expiry detection | `_is_expired()` | `swap_worker.py:112-119` | Wall-clock `age > 8h` (see Known Limitations #9) |
+| Expiry detection | `_is_expired()` | `swap_worker.py:112-119` | Funded maker swaps: Marscoin height >= `mars_locktime`. Others: wall-clock `age > 8h` (see Known Limitations #9) |
 | Auto-refund on expiry | `_handle_expired()` | `swap_worker.py:121-134` | Calls `engine.refund_mars_htlc()` for makers with funded MARS |
 
 ### Order book protocol
@@ -1135,13 +1149,12 @@ your own Bitcoin node.
    Without a patched ElectrumX server, clients must exchange offers
    manually via JSON. The Manual Exchange tab supports this.
 
-9. **Wall-clock swap expiry**: `SwapWorker._is_expired()` uses wall-clock
-   time (`age > 8 hours`) rather than comparing block heights. This means
-   a swap that sits unaccepted for 7 hours and is then taken will have
-   only ~1 hour of worker time before auto-expiry kills it. The correct
-   approach would be to compare the current block height against the
-   swap's locktime, but this requires a network call on every tick. For
-   the current human-scale swap volume this is an acceptable trade-off.
+9. **Wall-clock expiry of unaccepted offers**: once a maker has locked
+   MARS, `SwapWorker._is_expired()` compares the Marscoin height against
+   the swap's own locktime. Unaccepted offers and taker swaps still use
+   wall-clock time (`age > 8 hours`). A manual offer valid for 12 hours
+   is therefore no longer watched for acceptances after 8 hours; a buyer
+   who takes it then waits for MARS that never comes, and pays nothing.
 
 10. **Acceptance overwrite**: `atomicswap.accept_offer` on ElectrumX
     stores the acceptance in a dict keyed by `offer_id`. If two takers
@@ -1161,7 +1174,7 @@ your own Bitcoin node.
 12. **Griefing via acceptance**: An attacker can accept any offer with a
     garbage pubkey. The maker's wallet auto-funds a MARS HTLC to that
     pubkey. The attacker never funds BTC (they never intended to). The
-    maker's MARS is frozen for 8 hours until the refund locktime. Cost
+    maker's MARS is frozen for about 16 hours until the refund locktime. Cost
     to attacker: zero. Mitigation: require user confirmation before
     auto-funding MARS HTLC (currently the worker auto-funds immediately).
 
