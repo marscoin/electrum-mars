@@ -22,7 +22,11 @@ from electrum_mars.atomic_swap_htlc import Chain, create_htlc_script, htlc_to_p2
 BTC_BLOCK_SEC = 600
 MARS_BLOCK_SEC = 123
 BTC_SLOW = 1.25    # assume Bitcoin blocks may come up to 25% slower than target
-MARS_FAST = 0.85   # and Marscoin blocks up to 15% faster
+# Marscoin is mined in bursts. Measured over October and November 2026 the
+# fastest 234 blocks took 3.25 hours (0.41 of nominal) and the fastest 360 took
+# 7.3 hours (0.60). At half speed a lock needs about 352 blocks left, so the old
+# 234-block maker lock is refused and the 480-block lock passes.
+MARS_FAST = 0.5
 
 MIN_REFUND_GAP_SEC = 3600       # MARS refund opens >= 1 h after the BTC refund (pessimistic)
 MIN_BTC_WINDOW_SEC = 2 * 3600   # never ask anyone to pay BTC with < 2 h left before its refund

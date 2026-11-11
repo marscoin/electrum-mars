@@ -24,13 +24,21 @@ BTC_SAT = 3_652
 class TestRefundClocks(ElectrumTestCase):
 
     def test_fresh_offer_is_safe(self):
-        self.assertIsNone(safety.refund_order_problem(
-            MARS_H + MARS_TIMELOCK_BLOCKS, MARS_H, BTC_H + BTC_TIMELOCK_BLOCKS, BTC_H))
-
-    def test_longer_maker_lock_passes_the_taker_check(self):
-        # What makers lock now; takers (this and older versions) accept it.
+        # What makers lock now.
         self.assertIsNone(safety.refund_order_problem(
             MARS_H + MARS_MAKER_TIMELOCK_BLOCKS, MARS_H, BTC_H + BTC_TIMELOCK_BLOCKS, BTC_H))
+
+    def test_old_short_maker_lock_is_refused(self):
+        # 234 blocks can pass in under four hours; the Bitcoin refund may take five.
+        problem = safety.refund_order_problem(
+            MARS_H + MARS_TIMELOCK_BLOCKS, MARS_H, BTC_H + BTC_TIMELOCK_BLOCKS, BTC_H)
+        self.assertIn('reclaim the MARS too soon', problem)
+
+    def test_lock_needs_about_352_blocks_left(self):
+        ok = safety.refund_order_problem(MARS_H + 352, MARS_H, BTC_H + BTC_TIMELOCK_BLOCKS, BTC_H)
+        short = safety.refund_order_problem(MARS_H + 351, MARS_H, BTC_H + BTC_TIMELOCK_BLOCKS, BTC_H)
+        self.assertIsNone(ok)
+        self.assertIsNotNone(short)
 
     def test_maker_lock_outlasts_btc_refund_in_a_block_burst(self):
         # Mainnet, 2026-11-10: the fastest 234-block stretch took ~3.96 h.
@@ -40,10 +48,10 @@ class TestRefundClocks(ElectrumTestCase):
         self.assertGreater(MARS_MAKER_TIMELOCK_BLOCKS * burst_block_sec,
                            btc_refund + safety.MIN_REFUND_GAP_SEC)
 
-    def test_offer_aged_an_hour_is_unsafe(self):
-        # ~29 Marscoin blocks per hour eat into the margin.
+    def test_offer_aged_past_its_margin_is_unsafe(self):
+        # A 480-block offer has about 128 blocks of slack before it is refused.
         problem = safety.refund_order_problem(
-            MARS_H + MARS_TIMELOCK_BLOCKS - 30, MARS_H, BTC_H + BTC_TIMELOCK_BLOCKS, BTC_H)
+            MARS_H + MARS_MAKER_TIMELOCK_BLOCKS - 130, MARS_H, BTC_H + BTC_TIMELOCK_BLOCKS, BTC_H)
         self.assertIn('reclaim the MARS too soon', problem)
 
     def test_mars_refund_before_btc_refund_is_unsafe(self):
@@ -215,7 +223,7 @@ class TestTakerVerification(ElectrumTestCase):
     def run_coro(self, coro):
         return asyncio.run_coroutine_threadsafe(coro, self.asyncio_loop).result(10)
 
-    def new_swap(self, mars_locktime=MARS_H + MARS_TIMELOCK_BLOCKS, offer_address='',
+    def new_swap(self, mars_locktime=MARS_H + MARS_MAKER_TIMELOCK_BLOCKS, offer_address='',
                  btc_height=BTC_H):
         return self.engine.create_taker_swap(
             mars_amount_sat=MARS_SAT, btc_amount_sat=BTC_SAT,
@@ -332,9 +340,9 @@ class TestMakerAcceptance(ElectrumTestCase):
     def test_normal_acceptance(self):
         self.assertIsNone(self.check(BTC_H + BTC_TIMELOCK_BLOCKS))
 
-    def test_normal_acceptance_of_an_offer_made_before_the_upgrade(self):
-        self.assertIsNone(self.check(BTC_H + BTC_TIMELOCK_BLOCKS,
-                                     mars_locktime=MARS_H + MARS_TIMELOCK_BLOCKS))
+    def test_offer_made_with_the_old_short_lock_is_declined(self):
+        self.assertIsNotNone(self.check(BTC_H + BTC_TIMELOCK_BLOCKS,
+                                        mars_locktime=MARS_H + MARS_TIMELOCK_BLOCKS))
 
     def test_refund_too_soon(self):
         self.assertIsNotNone(self.check(BTC_H + 5))
@@ -368,7 +376,7 @@ class TestMakerLock(ElectrumTestCase):
         swap = self.maker_swap()
         self.assertEqual(MARS_H + MARS_MAKER_TIMELOCK_BLOCKS, swap.mars_locktime)
         self.assertEqual(480, MARS_MAKER_TIMELOCK_BLOCKS)
-        self.assertEqual(234, MARS_TIMELOCK_BLOCKS)   # older makers; takers still accept it
+        self.assertEqual(234, MARS_TIMELOCK_BLOCKS)   # older makers; takers now refuse it
 
     def test_funded_maker_swap_is_not_expired_before_its_refund_height(self):
         # 10 hours old: past the old 8-hour cutoff, but the MARS refund is
