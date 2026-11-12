@@ -192,10 +192,13 @@ jobs:
 
   # ─── macOS Intel ─────────────────────────────────────────────────
   macos:
-    # Homebrew bottles target the runner's macOS, so the app needs at least
-    # the runner's version. GitHub retired the macOS 14 runner in 2026; 15 is
-    # the oldest one available.
+    # The app must run on older Macs than the build machine. Homebrew's
+    # ready-made libraries only run on the runner's macOS or newer, so the
+    # native libraries are built here from source for MACOSX_DEPLOYMENT_TARGET,
+    # and the build fails if anything in the app needs a newer system.
     runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -206,9 +209,9 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install brew dependencies
+      - name: Install build tools
         run: |
-          brew install secp256k1 zbar libusb openssl@3
+          brew install autoconf automake libtool gettext pkg-config
 
       - name: Install Python dependencies
         run: |
@@ -217,11 +220,22 @@ jobs:
             aiohttp aiohttp-socks 'aiorpcx>=0.22,<0.26' dnspython \
             'protobuf>=3.12,<4' certifi qrcode attrs bitstring qdarkstyle
 
-      - name: Copy native libraries
+      - name: Build native libraries for the minimum macOS
         run: |
-          cp $(brew --prefix secp256k1)/lib/libsecp256k1.dylib electrum_mars/libsecp256k1.0.dylib
-          cp $(brew --prefix zbar)/lib/libzbar.dylib electrum_mars/libzbar.0.dylib
-          cp $(brew --prefix libusb)/lib/libusb-1.0.dylib electrum_mars/libusb-1.0.dylib
+          export PATH="$(brew --prefix gettext)/bin:$PATH"
+          contrib/make_libsecp256k1.sh
+          contrib/make_zbar.sh
+          contrib/make_libusb.sh
+          ls -l electrum_mars/*.dylib
+          # The wallet looks for these names.
+          cd electrum_mars
+          for want in libsecp256k1.0.dylib libzbar.0.dylib libusb-1.0.dylib; do
+            stem="${want%%.*}"
+            [ -f "$want" ] || cp -v "$(ls ${stem}*.dylib | head -1)" "$want"
+          done
+          for f in libsecp256k1.0.dylib libzbar.0.dylib libusb-1.0.dylib; do
+            echo "$f minos: $(otool -l "$f" | awk '/LC_BUILD_VERSION/{b=1} b&&/minos/{print $2; exit}')"
+          done
 
       - name: Create locale directory
         run: mkdir -p electrum_mars/locale
@@ -231,21 +245,11 @@ jobs:
           ELECTRUM_VERSION="${{ env.ELECTRUM_VERSION }}" \
           pyinstaller --noconfirm --clean contrib/osx/osx.spec
 
-      - name: Fix OpenSSL in bundle
-        run: |
-          BREW_SSL="$(brew --prefix openssl@3)/lib"
-          rm -f dist/Electrum-Mars.app/Contents/Frameworks/libcrypto.3.dylib
-          rm -f dist/Electrum-Mars.app/Contents/Frameworks/libssl.3.dylib
-          cp "$BREW_SSL/libcrypto.3.dylib" dist/Electrum-Mars.app/Contents/Frameworks/
-          cp "$BREW_SSL/libssl.3.dylib" dist/Electrum-Mars.app/Contents/Frameworks/
-          codesign -s - -f dist/Electrum-Mars.app/Contents/Frameworks/libcrypto.3.dylib
-          codesign -s - -f dist/Electrum-Mars.app/Contents/Frameworks/libssl.3.dylib
-          codesign -s - -f --deep dist/Electrum-Mars.app
-
       - name: Make the app portable
-        # Point Homebrew library references inside the app, then fail if
-        # anything still refers to the build machine or needs macOS > 15.
-        run: contrib/osx/make_portable.sh dist/Electrum-Mars.app 15.0
+        # Point any outside library references inside the app, then fail if
+        # anything still refers to the build machine or needs a newer macOS
+        # than the minimum.
+        run: contrib/osx/make_portable.sh dist/Electrum-Mars.app "$MACOSX_DEPLOYMENT_TARGET"
 
       - name: Smoke test (app starts)
         run: dist/Electrum-Mars.app/Contents/MacOS/run_electrum --offline -D "$RUNNER_TEMP/em-data" version
