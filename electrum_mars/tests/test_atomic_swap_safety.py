@@ -410,3 +410,38 @@ class TestMakerLock(ElectrumTestCase):
                                 mars_locktime=MARS_H + MARS_MAKER_TIMELOCK_BLOCKS,
                                 created_at=time.time() - 9 * 3600)
         self.assertTrue(self.worker._is_expired(taker))
+
+
+class TestMakerChecksTheBitcoinContract(ElectrumTestCase):
+
+    def setUp(self):
+        super().setUp()
+        _, self.hash160 = generate_preimage()
+        _, self.maker = generate_keypair()
+        _, self.taker = generate_keypair()
+        self.swap = SimpleNamespace(payment_hash160=self.hash160.hex(), my_pubkey=self.maker.hex())
+
+    def acceptance(self, **changes):
+        from electrum_mars.atomic_swap_htlc import create_htlc_script, htlc_to_p2wsh_address
+        script = create_htlc_script(payment_hash160=self.hash160, recipient_pubkey=self.maker,
+                                    sender_pubkey=self.taker, locktime=BTC_H + BTC_TIMELOCK_BLOCKS)
+        base = {'taker_pubkey': self.taker.hex(), 'btc_locktime': BTC_H + BTC_TIMELOCK_BLOCKS,
+                'btc_htlc_address': htlc_to_p2wsh_address(script, Chain.BTC)}
+        base.update(changes)
+        return base
+
+    def test_the_expected_contract_passes(self):
+        self.assertIsNone(SwapWorker._btc_contract_problem(self.swap, self.acceptance()))
+
+    def test_a_different_contract_is_refused(self):
+        # The address was made for one refund time; the acceptance claims another.
+        problem = SwapWorker._btc_contract_problem(self.swap, self.acceptance(btc_locktime=BTC_H + BTC_TIMELOCK_BLOCKS + 1))
+        self.assertIn('different Bitcoin contract', problem)
+
+    def test_a_missing_contract_is_refused(self):
+        for bad in (None, '', 5):
+            self.assertIsNotNone(SwapWorker._btc_contract_problem(self.swap, self.acceptance(btc_htlc_address=bad)))
+
+    def test_garbage_is_refused_not_raised(self):
+        self.assertIsNotNone(SwapWorker._btc_contract_problem(self.swap, self.acceptance(taker_pubkey='zz')))
+        self.assertIsNotNone(SwapWorker._btc_contract_problem(self.swap, self.acceptance(btc_locktime='soon')))

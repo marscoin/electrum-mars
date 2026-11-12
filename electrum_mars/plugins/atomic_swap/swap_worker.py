@@ -188,6 +188,16 @@ class SwapWorker:
                     self._refused.add(refusal_key)
                     await self._report_abandoned(swap.swap_id)
                     return
+                # The Bitcoin contract the taker names must be the one we
+                # compute ourselves. Check before anything is recorded: an
+                # acceptance that fails here must never lead to a lock.
+                problem = self._btc_contract_problem(swap, acceptance)
+                if problem:
+                    _logger.warning(
+                        f"Maker {swap.swap_id[:8]}: refusing acceptance: {problem}")
+                    self._refused.add(refusal_key)
+                    await self._report_abandoned(swap.swap_id)
+                    return
                 # Got an acceptance — record the taker's pubkey and
                 # have the engine build the MARS HTLC
                 self.engine.set_peer_info(swap.swap_id, acceptance['taker_pubkey'])
@@ -228,6 +238,9 @@ class SwapWorker:
                         f"addr={btc_htlc_addr[:20]}...")
 
             if not swap.mars_htlc_address:
+                return
+            # Never lock Marscoin without a verified Bitcoin contract to be paid into.
+            if not swap.btc_htlc_address or not swap.btc_locktime:
                 return
 
             # A taker has accepted — fund the MARS HTLC
@@ -517,6 +530,30 @@ class SwapWorker:
             import traceback; traceback.print_exc()
 
         print(f"[SwapWorker] _find_mars_htlc_funding: ALL METHODS FAILED")
+        return None
+
+    @staticmethod
+    def _btc_contract_problem(swap, acceptance) -> Optional[str]:
+        """Return a reason if the acceptance does not name the Bitcoin contract we expect."""
+        from electrum_mars.atomic_swap_htlc import create_htlc_script, htlc_to_p2wsh_address, Chain
+        from electrum_mars.util import bfh
+        address = acceptance.get('btc_htlc_address')
+        locktime = acceptance.get('btc_locktime')
+        taker = acceptance.get('taker_pubkey')
+        if not isinstance(address, str) or not address or not isinstance(taker, str):
+            return 'the acceptance names no Bitcoin contract'
+        try:
+            script = create_htlc_script(
+                payment_hash160=bfh(swap.payment_hash160),
+                recipient_pubkey=bfh(swap.my_pubkey),
+                sender_pubkey=bfh(taker),
+                locktime=locktime,
+            )
+            expected = htlc_to_p2wsh_address(script, Chain.BTC)
+        except Exception:
+            return 'the acceptance could not be checked'
+        if expected != address:
+            return 'the acceptance names a different Bitcoin contract'
         return None
 
     @staticmethod
