@@ -196,7 +196,7 @@ jobs:
     # ready-made libraries only run on the runner's macOS or newer, so the
     # native libraries are built here from source for MACOSX_DEPLOYMENT_TARGET,
     # and the build fails if anything in the app needs a newer system.
-    runs-on: macos-15
+    runs-on: macos-latest
     env:
       MACOSX_DEPLOYMENT_TARGET: '12.0'
     steps:
