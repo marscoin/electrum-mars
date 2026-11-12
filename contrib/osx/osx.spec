@@ -104,7 +104,9 @@ for d in a.datas:
 # Remove ALL OpenSSL libs that PyInstaller found (scrypt bundles a conflicting copy),
 # then add brew's OpenSSL explicitly. Scrypt will use brew's version at runtime.
 import subprocess
-brew_prefix = subprocess.check_output(['brew', '--prefix', 'openssl@3']).decode().strip()
+# OPENSSL_PREFIX: an OpenSSL built for the minimum macOS (the release build sets it).
+# Homebrew's copy only runs on the build machine's macOS or newer.
+brew_prefix = os.environ.get('OPENSSL_PREFIX') or subprocess.check_output(['brew', '--prefix', 'openssl@3']).decode().strip()
 for x in a.binaries.copy():
     if 'libcrypto' in x[0] or 'libssl' in x[0]:
         a.binaries.remove(x)
