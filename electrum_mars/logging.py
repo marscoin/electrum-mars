@@ -319,7 +319,9 @@ def configure_logging(config: 'SimpleConfig', *, log_to_file: Optional[bool] = N
     _configure_stderr_logging(verbosity=verbosity, verbosity_shortcuts=verbosity_shortcuts)
 
     if log_to_file is None:
-        log_to_file = config.get('log_to_file', False)
+        # On by default: a user who is asked "what happened?" can send the newest
+        # file from the logs folder. The last 10 runs are kept; nothing leaves the computer.
+        log_to_file = config.get('log_to_file', True)
         log_to_file |= is_android_debug_apk()
     if log_to_file:
         log_directory = pathlib.Path(config.path) / "logs"

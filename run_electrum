@@ -35,6 +35,230 @@ if sys.version_info[:3] < _min_python_version_tuple:
     sys.exit("Error: Electrum requires Python version >= %s..." % MIN_PYTHON_VERSION)
 
 
+# ---------------------------------------------------------------------------
+# Startup guard
+#
+# If the wallet fails before its window exists (a missing library, a broken
+# install, an error while reading the config), the user used to see nothing
+# at all. This block writes the error to "startup-error.log" in the data
+# folder, shows a plain system dialog, and offers to send the report to the
+# Marscoin Foundation. Nothing is sent unless the user says yes.
+#
+# It uses the standard library only and comes before every other import, as
+# those imports are among the things that can fail. Once the Qt window is up,
+# the wallet's own crash reporter (gui/qt/exception_window.py) takes over.
+# ---------------------------------------------------------------------------
+_STARTUP_REPORT_URL = "https://www.marscoin.org/wallet/crash"  # same as BaseCrashReporter.report_server + "/crash"
+_STARTUP_CONTACT = "hello@marscoinfoundation.org"
+_startup_fault_file = None  # kept open for faulthandler
+
+
+def _startup_dir():
+    """The data folder, found without importing electrum_mars."""
+    try:
+        if "ELECTRUMLTC_DIR" in os.environ:
+            d = os.environ["ELECTRUMLTC_DIR"]
+        elif getattr(sys, 'frozen', False) and os.path.exists(os.path.join(getattr(sys, '_MEIPASS', ''), 'is_portable')):
+            d = os.path.join(os.path.realpath(os.getcwd()), 'electrum-mars_data')  # portable build: next to the program
+        elif os.name == 'posix':
+            d = os.path.join(os.environ.get("HOME") or os.path.expanduser('~'), ".electrum-mars")
+        elif "APPDATA" in os.environ:
+            d = os.path.join(os.environ["APPDATA"], "Electrum-Mars")
+        elif "LOCALAPPDATA" in os.environ:
+            d = os.path.join(os.environ["LOCALAPPDATA"], "Electrum-Mars")
+        else:
+            d = None
+        if d:
+            os.makedirs(d, exist_ok=True)
+            return d
+    except Exception:
+        pass
+    import tempfile
+    return tempfile.gettempdir()
+
+
+def _startup_scrub(text):
+    """Replace the user's home folder with '~': a report says where the program failed, not who ran it."""
+    try:
+        home = os.path.expanduser('~')
+        for h in sorted({home, os.path.realpath(home)}, key=len, reverse=True):
+            if h and len(h) > 3 and h != '~':
+                text = text.replace(h, '~').replace(h.replace(os.sep, '/'), '~')
+    except Exception:
+        pass
+    return text
+
+
+def _startup_version():
+    try:
+        mod = sys.modules.get('electrum_mars.version')
+        if mod is None:
+            from electrum_mars import version as mod
+        return str(mod.ELECTRUM_VERSION)
+    except BaseException:
+        return 'unknown'
+
+
+def _startup_report(exc_type, exc, tb):
+    """The report as the crash report server takes it (see electrum_mars/base_crash_reporter.py)."""
+    import locale
+    import platform
+    import traceback
+    frames = traceback.extract_tb(tb) if tb else []
+    last = frames[-1] if frames else None
+    try:
+        loc = locale.getlocale()[0] or "?"
+    except Exception:
+        loc = "?"
+    return {
+        "kind": "startup",
+        "exc_string": _startup_scrub(str(exc))[:2000],
+        "stack": _startup_scrub("".join(traceback.format_exception(exc_type, exc, tb)))[:30000],
+        "id": {
+            "file": _startup_scrub(last.filename) if last else "?",
+            "name": last.name if last else "?",
+            "type": getattr(exc_type, '__name__', str(exc_type)),
+        },
+        "app_version": _startup_version(),
+        "python_version": sys.version,
+        "os": platform.platform(),
+        "wallet_type": "not loaded",
+        "locale": loc,
+        "description": "",
+    }
+
+
+def _startup_write(report):
+    """Save the report as text in the data folder. Returns the path, or None."""
+    try:
+        import datetime
+        path = os.path.join(_startup_dir(), "startup-error.log")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("Electrum-Mars could not start.\n")
+            f.write("Time (UTC): %s\n" % datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
+            f.write("Electrum-Mars version: %s\n" % report["app_version"])
+            f.write("Operating system: %s\n" % report["os"])
+            f.write("Python: %s\n" % report["python_version"].replace("\n", " "))
+            f.write("Packaged build: %s\n\n" % bool(getattr(sys, 'frozen', False)))
+            f.write(report["stack"])
+        return path
+    except Exception:
+        return None
+
+
+def _startup_wants_window():
+    """True when the wallet was started as a program with a window, not as a command in a terminal."""
+    if os.environ.get("ELECTRUM_MARS_NO_STARTUP_DIALOG") or os.environ.get("CI") or 'ANDROID_DATA' in os.environ:
+        return False
+    positional = [a for a in sys.argv[1:] if not a.startswith('-')]
+    return (not positional) or positional[0] == 'gui' or ':' in positional[0]
+
+
+def _startup_dialog(title, text, ask):
+    """A system dialog without Qt. With ask=True it has two buttons and returns True for "send"."""
+    try:
+        if sys.platform == 'win32':
+            import ctypes
+            MB_OK, MB_YESNO, MB_ICONERROR, MB_ICONINFORMATION, MB_SETFOREGROUND, MB_TOPMOST, IDYES = 0x0, 0x4, 0x10, 0x40, 0x10000, 0x40000, 6
+            flags = (MB_YESNO | MB_ICONERROR if ask else MB_OK | MB_ICONINFORMATION) | MB_SETFOREGROUND | MB_TOPMOST
+            return ctypes.windll.user32.MessageBoxW(None, text, title, flags) == IDYES
+        import subprocess
+        env = {k: v for k, v in os.environ.items() if k not in ('LD_LIBRARY_PATH', 'PYTHONHOME', 'PYTHONPATH', 'QT_PLUGIN_PATH')}
+        if sys.platform == 'darwin':
+            q = lambda s: s.replace('\\', '\\\\').replace('"', '\\"')
+            buttons = '{"Don\'t send", "Send report"} default button 2' if ask else '{"OK"} default button 1'
+            script = 'display dialog "%s" with title "%s" buttons %s with icon %s giving up after 600' % (
+                q(text), q(title), buttons, 'stop' if ask else 'note')
+            out = subprocess.run(['osascript', '-e', script], capture_output=True, text=True, timeout=660, env=env)
+            return 'button returned:Send report' in (out.stdout or '')
+        import shutil
+        if shutil.which('zenity'):
+            cmd = ['zenity', '--title', title, '--text', text, '--width', '560', '--timeout', '600', '--no-markup']
+            cmd += ['--question', '--ok-label', 'Send report', '--cancel-label', "Don't send"] if ask else ['--info']
+            return subprocess.run(cmd, timeout=660, env=env).returncode == 0
+        if shutil.which('kdialog'):
+            cmd = ['kdialog', '--title', title] + (['--yesno', text, '--yes-label', 'Send report', '--no-label', "Don't send"] if ask else ['--msgbox', text])
+            return subprocess.run(cmd, timeout=660, env=env).returncode == 0
+    except Exception:
+        pass
+    return False
+
+
+def _startup_send(report):
+    """Send the report. Returns True if the server took it."""
+    try:
+        import json
+        import ssl
+        import urllib.request
+        try:
+            import certifi
+            ctx = ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            ctx = ssl.create_default_context()
+        req = urllib.request.Request(
+            _STARTUP_REPORT_URL, data=json.dumps(report).encode('utf-8'), method='POST',
+            headers={'content-type': 'application/json', 'user-agent': 'Electrum-Mars/%s' % report.get("app_version", "?")})
+        with urllib.request.urlopen(req, timeout=25, context=ctx) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def _startup_failed(exc_type, exc, tb, *, show_traceback=True):
+    """Called for an error that ends the program before a window exists."""
+    try:
+        if show_traceback:
+            sys.__excepthook__(exc_type, exc, tb)  # a terminal still gets the usual text
+        report = _startup_report(exc_type, exc, tb)
+        path = _startup_write(report)
+        if not _startup_wants_window():
+            return
+        summary = ("%s: %s" % (report["id"]["type"], report["exc_string"]))[:400]
+        saved = ("\n\nThe details were saved to:\n%s" % path) if path else ""
+        question = ("Electrum-Mars could not start.\n\n%s%s\n\n"
+                    "Send this error report to the Marscoin Foundation, so that it can be fixed?\n\n"
+                    "The report contains the error, your Electrum-Mars version and your operating system. "
+                    "It contains nothing about your wallet, your coins or your addresses." % (summary, saved))
+        if not _startup_dialog("Electrum-Mars", question, True):
+            return
+        if _startup_send(report):
+            _startup_dialog("Electrum-Mars", "Thank you. The report was sent to the Marscoin Foundation.", False)
+        else:
+            where = (" Please send the file\n%s\nto %s instead." % (path, _STARTUP_CONTACT)) if path else (" Please write to %s instead." % _STARTUP_CONTACT)
+            _startup_dialog("Electrum-Mars", "The report could not be sent." + where, False)
+    except BaseException:
+        pass
+
+
+def _startup_excepthook(exc_type, exc, tb):
+    if issubclass(exc_type, KeyboardInterrupt):
+        return sys.__excepthook__(exc_type, exc, tb)
+    _startup_failed(exc_type, exc, tb)
+
+
+def _install_startup_guard():
+    global _startup_fault_file
+    if 'ANDROID_DATA' in os.environ:
+        return
+    sys.excepthook = _startup_excepthook
+    # A crash below Python (in Qt or another library) leaves its trace in fault.log.
+    # The trace of the run before is kept as fault-previous.log.
+    try:
+        import faulthandler
+        d = _startup_dir()
+        path = os.path.join(d, "fault.log")
+        if os.path.exists(path) and os.path.getsize(path) > 0:
+            os.replace(path, os.path.join(d, "fault-previous.log"))
+        _startup_fault_file = open(path, "w", encoding="utf-8")
+        faulthandler.enable(file=_startup_fault_file, all_threads=True)
+    except Exception:
+        pass
+
+
+if __name__ == '__main__':
+    _install_startup_guard()
+
+
 import warnings
 import asyncio
 from typing import TYPE_CHECKING, Optional
@@ -72,7 +296,8 @@ def check_imports():
         import google.protobuf
         import aiorpcx
     except ImportError as e:
-        sys.exit(f"Error: {str(e)}. Try 'sudo python3 -m pip install <module-name>'")
+        # raised, not sys.exit: the startup guard above shows it to a user who has no terminal
+        raise ImportError(f"{str(e)}. Try 'python3 -m pip install <module-name>'") from e
     if not ((0, 22, 0) <= aiorpcx._version < (0, 26)):
         raise RuntimeError(f'aiorpcX version {aiorpcx._version} does not match required: 0.22.0<=ver<0.26')
     # the following imports are for pyinstaller
@@ -84,26 +309,33 @@ def check_imports():
     assert os.path.exists(certifi.where())
 
 
-if not is_android:
-    check_imports()
+# Some of these imports end the program with sys.exit("Error: ...") when a library is missing
+# (libsecp256k1, the crypto library). The startup guard shows that message to a user without a terminal.
+try:
+    if not is_android:
+        check_imports()
 
 
-sys._ELECTRUM_RUNNING_VIA_RUNELECTRUM = True  # used by logging.py
+    sys._ELECTRUM_RUNNING_VIA_RUNELECTRUM = True  # used by logging.py
 
-from electrum_mars.logging import get_logger, configure_logging  # import logging submodule first
-from electrum_mars import util
-from electrum_mars import constants
-from electrum_mars import SimpleConfig
-from electrum_mars.wallet_db import WalletDB
-from electrum_mars.wallet import Wallet
-from electrum_mars.storage import WalletStorage
-from electrum_mars.util import print_msg, print_stderr, json_encode, json_decode, UserCancelled
-from electrum_mars.util import InvalidPassword
-from electrum_mars.commands import get_parser, known_commands, Commands, config_variables
-from electrum_mars import daemon
-from electrum_mars import keystore
-from electrum_mars.util import create_and_start_event_loop
-from electrum_mars.i18n import set_language
+    from electrum_mars.logging import get_logger, configure_logging  # import logging submodule first
+    from electrum_mars import util
+    from electrum_mars import constants
+    from electrum_mars import SimpleConfig
+    from electrum_mars.wallet_db import WalletDB
+    from electrum_mars.wallet import Wallet
+    from electrum_mars.storage import WalletStorage
+    from electrum_mars.util import print_msg, print_stderr, json_encode, json_decode, UserCancelled
+    from electrum_mars.util import InvalidPassword
+    from electrum_mars.commands import get_parser, known_commands, Commands, config_variables
+    from electrum_mars import daemon
+    from electrum_mars import keystore
+    from electrum_mars.util import create_and_start_event_loop
+    from electrum_mars.i18n import set_language
+except SystemExit as _e:
+    if __name__ == '__main__' and isinstance(_e.code, str) and _startup_wants_window():
+        _startup_failed(type(_e), _e, _e.__traceback__, show_traceback=False)
+    raise
 
 if TYPE_CHECKING:
     import threading
@@ -495,4 +727,11 @@ def handle_cmd(*, cmdname: str, config: 'SimpleConfig', config_options: dict):
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except SystemExit as e:
+        # sys.exit("some message") before the window exists, e.g. when Qt cannot be loaded:
+        # without a terminal nobody would see the message.
+        if isinstance(e.code, str) and _startup_wants_window():
+            _startup_failed(type(e), e, e.__traceback__, show_traceback=False)
+        raise

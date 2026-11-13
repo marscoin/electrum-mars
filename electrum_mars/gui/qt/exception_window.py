@@ -104,12 +104,12 @@ class Exception_Window(BaseCrashReporter, QWidget, MessageBoxMixin, Logger):
 
     def send_report(self):
         def on_success(response):
-            # note: 'response' coming from (remote) crash reporter server.
-            # It contains a URL to the GitHub issue, so we allow rich text.
+            # note: 'response' comes from the (remote) crash report server.
+            # It is not shown: the text here is fixed, so the server cannot
+            # put anything in front of the user.
             self.show_message(parent=self,
                               title=_("Crash report"),
-                              msg=response,
-                              rich_text=True)
+                              msg=BaseCrashReporter.REPORT_SENT_MESSAGE)
             self.close()
         def on_failure(exc_info):
             e = exc_info[1]

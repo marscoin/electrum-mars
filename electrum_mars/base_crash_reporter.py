@@ -21,6 +21,7 @@
 # SOFTWARE.
 import asyncio
 import json
+import os
 import locale
 import traceback
 import sys
@@ -33,8 +34,26 @@ from .util import make_aiohttp_session
 from .logging import describe_os_version, Logger, get_git_version
 
 
+def scrub_home(text: str) -> str:
+    """Replace the user's home folder in a path or traceback with '~'.
+
+    A report should say where in the program something failed, not what the
+    user's account is called.
+    """
+    if not isinstance(text, str):
+        return text
+    homes = {os.path.expanduser('~'), os.path.realpath(os.path.expanduser('~'))}
+    for home in sorted(homes, key=len, reverse=True):
+        if home and home not in ('~', os.sep) and len(home) > 3:
+            text = text.replace(home, '~')
+            text = text.replace(home.replace(os.sep, '/'), '~')
+    return text
+
+
 class BaseCrashReporter(Logger):
-    report_server = "https://crashhub.electrum-mars.org"
+    # Reports are received by the Marscoin Foundation and kept private.
+    # The address is also built into run_electrum (startup failures).
+    report_server = "https://www.marscoin.org/wallet"
     config_key = "show_crash_reporter"
     issue_template = """<h2>Traceback</h2>
 <pre>
@@ -43,30 +62,28 @@ class BaseCrashReporter(Logger):
 
 <h2>Additional information</h2>
 <ul>
-  <li>Electrum version: {app_version}</li>
+  <li>Electrum-Mars version: {app_version}</li>
   <li>Python version: {python_version}</li>
   <li>Operating system: {os}</li>
   <li>Wallet type: {wallet_type}</li>
   <li>Locale: {locale}</li>
 </ul>
     """
-    CRASH_MESSAGE = _('Something went wrong while executing Electrum.')
+    CRASH_MESSAGE = _('Something went wrong while executing Electrum-Mars.')
     CRASH_TITLE = _('Sorry!')
     REQUEST_HELP_MESSAGE = _('To help us diagnose and fix the problem, you can send us a bug report that contains '
                              'useful debug information:')
     DESCRIBE_ERROR_MESSAGE = _("Please briefly describe what led to the error (optional):")
     ASK_CONFIRM_SEND = _("Do you want to send this report?")
     USER_COMMENT_PLACEHOLDER = _("Do not enter sensitive/private information here. "
-                                 "The report will be visible on the public issue tracker.")
+                                 "The report goes to the Marscoin Foundation and is not published.")
+    REPORT_SENT_MESSAGE = _("Thank you. The report was sent to the Marscoin Foundation.")
 
     def __init__(self, exctype, value, tb):
         Logger.__init__(self)
         self.exc_args = (exctype, value, tb)
 
     def send_report(self, asyncio_loop, proxy, endpoint="/crash", *, timeout=None):
-        if constants.net.GENESIS[-4:] not in ["29a0", "bfe2"] and ".electrum-mars.org" in BaseCrashReporter.report_server:
-            # Gah! Some kind of altcoin wants to send us crash reports.
-            raise Exception(_("Missing report URL."))
         report = self.get_traceback_info()
         report.update(self.get_additional_info())
         report = json.dumps(report)
@@ -88,9 +105,10 @@ class BaseCrashReporter(Logger):
             "name": stack[-1].name,
             "type": self.exc_args[0].__name__
         }
+        id["file"] = scrub_home(id["file"])
         return {
-            "exc_string": exc_string,
-            "stack": readable_trace,
+            "exc_string": scrub_home(exc_string),
+            "stack": scrub_home(readable_trace),
             "id": id
         }
 
