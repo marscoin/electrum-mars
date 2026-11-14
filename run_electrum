@@ -289,6 +289,9 @@ if is_pyinstaller:
 
 def check_imports():
     # pure-python dependencies need to be imported here for pyinstaller
+    if os.environ.get('ELECTRUM_MARS_TEST_STARTUP_FAILURE'):
+        # for the release build's test of the startup guard, and for support
+        raise ImportError('startup failure requested by ELECTRUM_MARS_TEST_STARTUP_FAILURE')
     try:
         import dns
         import certifi
