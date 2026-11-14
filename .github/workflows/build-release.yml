@@ -85,6 +85,28 @@ jobs:
       - name: Smoke test (binary starts)
         run: dist/electrum-mars/electrum-mars --offline -D "$RUNNER_TEMP/em-data" version
 
+      # The "version" command above does not load the window. These two do what a user does:
+      # start the wallet, and start a wallet that is broken.
+      - name: Smoke test (window opens and stays open)
+        run: |
+          sudo apt-get install -y xvfb
+          export ELECTRUMLTC_DIR="$RUNNER_TEMP/em-gui"; mkdir -p "$ELECTRUMLTC_DIR"
+          xvfb-run -a dist/electrum-mars/electrum-mars --offline > "$RUNNER_TEMP/gui.log" 2>&1 &
+          pid=$!
+          sleep 30
+          if ! kill -0 $pid 2>/dev/null; then
+            echo "The wallet exited within 30 seconds."; cat "$RUNNER_TEMP/gui.log"; cat "$ELECTRUMLTC_DIR/startup-error.log" 2>/dev/null; exit 1
+          fi
+          pkill -f dist/electrum-mars/electrum-mars || true
+          if [ -e "$ELECTRUMLTC_DIR/startup-error.log" ]; then cat "$ELECTRUMLTC_DIR/startup-error.log"; exit 1; fi
+          ls "$ELECTRUMLTC_DIR"
+
+      - name: Smoke test (a broken start leaves an error file)
+        run: |
+          export ELECTRUMLTC_DIR="$RUNNER_TEMP/em-broken"; mkdir -p "$ELECTRUMLTC_DIR"
+          if ELECTRUM_MARS_TEST_STARTUP_FAILURE=1 ELECTRUM_MARS_NO_STARTUP_DIALOG=1 dist/electrum-mars/electrum-mars --offline; then echo "expected a failure"; exit 1; fi
+          grep "startup failure requested" "$ELECTRUMLTC_DIR/startup-error.log"
+
       - name: Download AppImage tool
         run: |
           wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -O appimagetool
@@ -181,6 +203,37 @@ jobs:
       - name: Smoke test (binary starts)
         run: dist/electrum-mars/electrum-mars.exe --offline -D "$env:RUNNER_TEMP/em-data" version
 
+      - name: Smoke test (window opens and stays open)
+        shell: pwsh
+        run: |
+          $env:ELECTRUMLTC_DIR = "$env:RUNNER_TEMP\em-gui"
+          New-Item -ItemType Directory -Force $env:ELECTRUMLTC_DIR | Out-Null
+          $p = Start-Process -FilePath "dist/electrum-mars/electrum-mars.exe" -ArgumentList "--offline" -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\gui-out.log" -RedirectStandardError "$env:RUNNER_TEMP\gui-err.log"
+          Start-Sleep -Seconds 30
+          $errFile = "$env:ELECTRUMLTC_DIR\startup-error.log"
+          if ($p.HasExited) {
+            Write-Host "The wallet exited within 30 seconds, code $($p.ExitCode)."
+            Get-Content "$env:RUNNER_TEMP\gui-out.log", "$env:RUNNER_TEMP\gui-err.log" -ErrorAction SilentlyContinue
+            if (Test-Path $errFile) { Get-Content $errFile }
+            exit 1
+          }
+          Stop-Process -Id $p.Id -Force
+          if (Test-Path $errFile) { Get-Content $errFile; exit 1 }
+          Get-ChildItem $env:ELECTRUMLTC_DIR
+
+      - name: Smoke test (a broken start leaves an error file)
+        shell: pwsh
+        run: |
+          $env:ELECTRUMLTC_DIR = "$env:RUNNER_TEMP\em-broken"
+          New-Item -ItemType Directory -Force $env:ELECTRUMLTC_DIR | Out-Null
+          $env:ELECTRUM_MARS_TEST_STARTUP_FAILURE = "1"
+          $env:ELECTRUM_MARS_NO_STARTUP_DIALOG = "1"
+          & dist/electrum-mars/electrum-mars.exe --offline
+          if ($LASTEXITCODE -eq 0) { Write-Host "expected a failure"; exit 1 }
+          if (-not (Select-String -Path "$env:ELECTRUMLTC_DIR\startup-error.log" -Pattern "startup failure requested" -Quiet)) { Write-Host "no error file"; exit 1 }
+          Get-Content "$env:ELECTRUMLTC_DIR\startup-error.log"
+          exit 0
+
       - name: Create portable zip
         run: Compress-Archive -Path dist/electrum-mars -DestinationPath "Electrum-Mars-${{ env.ELECTRUM_VERSION }}-portable-win64.zip"
 
@@ -271,6 +324,25 @@ jobs:
 
       - name: Smoke test (app starts)
         run: dist/Electrum-Mars.app/Contents/MacOS/run_electrum --offline -D "$RUNNER_TEMP/em-data" version
+
+      - name: Smoke test (window opens and stays open)
+        run: |
+          export ELECTRUMLTC_DIR="$RUNNER_TEMP/em-gui"; mkdir -p "$ELECTRUMLTC_DIR"
+          dist/Electrum-Mars.app/Contents/MacOS/run_electrum --offline > "$RUNNER_TEMP/gui.log" 2>&1 &
+          pid=$!
+          sleep 30
+          if ! kill -0 $pid 2>/dev/null; then
+            echo "The wallet exited within 30 seconds."; cat "$RUNNER_TEMP/gui.log"; cat "$ELECTRUMLTC_DIR/startup-error.log" 2>/dev/null; exit 1
+          fi
+          kill $pid || true
+          if [ -e "$ELECTRUMLTC_DIR/startup-error.log" ]; then cat "$ELECTRUMLTC_DIR/startup-error.log"; exit 1; fi
+          ls "$ELECTRUMLTC_DIR"
+
+      - name: Smoke test (a broken start leaves an error file)
+        run: |
+          export ELECTRUMLTC_DIR="$RUNNER_TEMP/em-broken"; mkdir -p "$ELECTRUMLTC_DIR"
+          if ELECTRUM_MARS_TEST_STARTUP_FAILURE=1 ELECTRUM_MARS_NO_STARTUP_DIALOG=1 dist/Electrum-Mars.app/Contents/MacOS/run_electrum --offline; then echo "expected a failure"; exit 1; fi
+          grep "startup failure requested" "$ELECTRUMLTC_DIR/startup-error.log"
 
       - name: Create DMG
         run: |
