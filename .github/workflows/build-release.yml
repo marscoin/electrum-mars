@@ -79,6 +79,7 @@ jobs:
             --hidden-import electrum_mars \
             --hidden-import _scrypt \
             --hidden-import electrum_mars.atomic_swap_htlc \
+            --hidden-import electrum_mars.btc_monitor \
             --hidden-import electrum_mars.plugins.jade.jade \
             --hidden-import electrum_mars.plugins.jade.jadepy.jade \
             --collect-submodules bitstring \
@@ -223,6 +224,7 @@ jobs:
             --hidden-import electrum_mars `
             --hidden-import _scrypt `
             --hidden-import electrum_mars.atomic_swap_htlc `
+            --hidden-import electrum_mars.btc_monitor `
             --hidden-import electrum_mars.plugins.jade.jade `
             --hidden-import electrum_mars.plugins.jade.jadepy.jade `
             --collect-submodules bitstring `

@@ -552,7 +552,7 @@ def _selftest(mode: str) -> int:
     def swap_plugin():
         plugins = init_plugins(config, "qt")
         if "atomic_swap" not in plugins.plugins:
-            raise Exception("the atomic swap plugin did not load")
+            plugins.load_plugin("atomic_swap")  # raises with the reason
 
     check("atomic swap plugin", swap_plugin)
 
