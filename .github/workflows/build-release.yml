@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - 'windows-connect-fix'   # TEMPORARY: test builds for this fix; removed before merging
   workflow_dispatch:
     inputs:
       version:
@@ -76,6 +78,7 @@ jobs:
             --add-binary "electrum_mars/libsecp256k1.so.0:." \
             --hidden-import electrum_mars \
             --hidden-import _scrypt \
+            --collect-submodules electrum_mars \
             --hidden-import electrum_mars.plugins.jade.jade \
             --hidden-import electrum_mars.plugins.jade.jadepy.jade \
             --collect-submodules bitstring \
@@ -84,6 +87,11 @@ jobs:
 
       - name: Smoke test (binary starts)
         run: dist/electrum-mars/electrum-mars --offline -D "$RUNNER_TEMP/em-data" version
+
+      # A package has shipped without the fast scrypt library and without the atomic swap
+      # module (Windows, up to 4.4.7). The wallet then starts but never connects.
+      - name: Self-test (complete package, connects and syncs)
+        run: ELECTRUM_MARS_SELFTEST=connect xvfb-run -a dist/electrum-mars/electrum-mars
 
       # The "version" command above does not load the window. These two do what a user does:
       # start the wallet, and start a wallet that is broken.
@@ -136,6 +144,25 @@ jobs:
           name: linux-appimage
           path: dist/Electrum-Mars-*-x86_64.AppImage
 
+  # TEMPORARY: what the released 4.4.7 Windows package does on a clean machine. Removed before merging.
+  diagnose-windows-447:
+    runs-on: windows-latest
+    steps:
+      - name: Run the released package for three minutes
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://github.com/marscoin/electrum-mars/releases/download/v4.4.7/Electrum-Mars-v4.4.7-portable-win64.zip" -OutFile w.zip
+          Expand-Archive w.zip -DestinationPath w
+          $env:ELECTRUMLTC_DIR = "$env:RUNNER_TEMP\em-diag"
+          New-Item -ItemType Directory -Force $env:ELECTRUMLTC_DIR | Out-Null
+          $p = Start-Process -FilePath "w/electrum-mars/electrum-mars.exe" -ArgumentList "-v","daemon" -PassThru -RedirectStandardOutput out.log -RedirectStandardError err.log
+          Start-Sleep -Seconds 180
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          Write-Host "=== lines in the log: $((Get-Content err.log).Count)"
+          Write-Host "=== first 40 lines"; Get-Content err.log -TotalCount 40
+          Write-Host "=== network lines"; Select-String -Path err.log -Pattern "connection established|connecting|verify|skipping header|interface|scrypt|blockchain|switching|disconnect" | Select-Object -First 60 | ForEach-Object { $_.Line }
+          Write-Host "=== last 15 lines"; Get-Content err.log -Tail 15
+
   # ─── Windows (native build on Windows runner) ─────────────────────
   windows:
     runs-on: windows-latest
@@ -152,7 +179,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install pyinstaller PyQt5 cryptography pyaes `
+          python -m pip install pyinstaller PyQt5 scrypt cryptography pyaes `
             aiohttp aiohttp-socks 'aiorpcx>=0.22,<0.26' dnspython `
             'protobuf>=3.12,<4' certifi qrcode attrs bitstring qdarkstyle
 
@@ -194,6 +221,8 @@ jobs:
             --icon electrum_mars/gui/icons/marscoin.ico `
             --add-binary "electrum_mars/libsecp256k1-0.dll;electrum_mars" `
             --hidden-import electrum_mars `
+            --hidden-import _scrypt `
+            --collect-submodules electrum_mars `
             --hidden-import electrum_mars.plugins.jade.jade `
             --hidden-import electrum_mars.plugins.jade.jadepy.jade `
             --collect-submodules bitstring `
@@ -202,6 +231,13 @@ jobs:
 
       - name: Smoke test (binary starts)
         run: dist/electrum-mars/electrum-mars.exe --offline -D "$env:RUNNER_TEMP/em-data" version
+
+      - name: Self-test (complete package, connects and syncs)
+        shell: pwsh
+        run: |
+          $env:ELECTRUM_MARS_SELFTEST = "connect"
+          & dist/electrum-mars/electrum-mars.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Smoke test (window opens and stays open)
         shell: pwsh
@@ -324,6 +360,9 @@ jobs:
 
       - name: Smoke test (app starts)
         run: dist/Electrum-Mars.app/Contents/MacOS/run_electrum --offline -D "$RUNNER_TEMP/em-data" version
+
+      - name: Self-test (complete package, connects and syncs)
+        run: ELECTRUM_MARS_SELFTEST=connect dist/Electrum-Mars.app/Contents/MacOS/run_electrum
 
       - name: Smoke test (window opens and stays open)
         run: |
