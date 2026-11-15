@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-    branches:
-      - 'windows-connect-fix'   # TEMPORARY: test builds for this fix; removed before merging
   workflow_dispatch:
     inputs:
       version:
@@ -144,25 +142,6 @@ jobs:
         with:
           name: linux-appimage
           path: dist/Electrum-Mars-*-x86_64.AppImage
-
-  # TEMPORARY: what the released 4.4.7 Windows package does on a clean machine. Removed before merging.
-  diagnose-windows-447:
-    runs-on: windows-latest
-    steps:
-      - name: Run the released package for three minutes
-        shell: pwsh
-        run: |
-          Invoke-WebRequest "https://github.com/marscoin/electrum-mars/releases/download/v4.4.7/Electrum-Mars-v4.4.7-portable-win64.zip" -OutFile w.zip
-          Expand-Archive w.zip -DestinationPath w
-          $env:ELECTRUMLTC_DIR = "$env:RUNNER_TEMP\em-diag"
-          New-Item -ItemType Directory -Force $env:ELECTRUMLTC_DIR | Out-Null
-          $p = Start-Process -FilePath "w/electrum-mars/electrum-mars.exe" -ArgumentList "-v","daemon" -PassThru -RedirectStandardOutput out.log -RedirectStandardError err.log
-          Start-Sleep -Seconds 180
-          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
-          Write-Host "=== lines in the log: $((Get-Content err.log).Count)"
-          Write-Host "=== first 40 lines"; Get-Content err.log -TotalCount 40
-          Write-Host "=== network lines"; Select-String -Path err.log -Pattern "connection established|connecting|verify|skipping header|interface|scrypt|blockchain|switching|disconnect" | Select-Object -First 60 | ForEach-Object { $_.Line }
-          Write-Host "=== last 15 lines"; Get-Content err.log -Tail 15
 
   # ─── Windows (native build on Windows runner) ─────────────────────
   windows:
