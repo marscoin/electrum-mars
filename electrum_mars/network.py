@@ -138,6 +138,25 @@ def filter_protocol(hostmap, *, allowed_protocols: Iterable[str] = None) -> Sequ
     return eligible
 
 
+# The Marscoin servers used to be listed by IP address and had self-signed certificates.
+# They now have certificates from a public authority, issued for their names. A wallet that
+# still connects by IP address cannot verify such a certificate and stays "Not connected".
+FORMER_SERVER_ADDRESSES = {
+    '161.35.136.251': 'electrum.marscoin.org',
+    '147.182.177.23': 'electrum2.marscoin.org',
+    '164.90.138.207': 'electrum.marscoin.org',   # retired; point its users at a live server
+}
+
+
+def migrate_server_string(server: Optional[str]) -> Optional[str]:
+    """Replace a former server IP address in a saved "host:port:protocol" string by its name."""
+    if not isinstance(server, str):
+        return server
+    host, sep, rest = server.partition(':')
+    name = FORMER_SERVER_ADDRESSES.get(host)
+    return f"{name}{sep}{rest}" if name else server
+
+
 def pick_random_server(hostmap=None, *, allowed_protocols: Iterable[str],
                        exclude_set: Set[ServerAddr] = None) -> Optional[ServerAddr]:
     if hostmap is None:
@@ -296,7 +315,9 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
         self._allowed_protocols = {PREFERRED_NETWORK_PROTOCOL}
 
         # Server for addresses and transactions
-        self.default_server = self.config.get('server', None)
+        self.default_server = migrate_server_string(self.config.get('server', None))
+        if self.default_server != self.config.get('server', None):
+            self.config.set_key('server', self.default_server, True)
         # Sanitize default server
         if self.default_server:
             try:
@@ -410,7 +431,9 @@ class Network(Logger, NetworkRetryManager[ServerAddr]):
             with open(path, "r", encoding='utf-8') as f:
                 data = f.read()
                 servers_list = json.loads(data)
-            return [ServerAddr.from_str(s) for s in servers_list]
+            # former IP addresses become names; the same server is listed once
+            migrated = list(dict.fromkeys(migrate_server_string(s) for s in servers_list))
+            return [ServerAddr.from_str(s) for s in migrated]
         except:
             return []
 

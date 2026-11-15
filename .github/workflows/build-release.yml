@@ -78,7 +78,7 @@ jobs:
             --add-binary "electrum_mars/libsecp256k1.so.0:." \
             --hidden-import electrum_mars \
             --hidden-import _scrypt \
-            --collect-submodules electrum_mars \
+            --hidden-import electrum_mars.atomic_swap_htlc \
             --hidden-import electrum_mars.plugins.jade.jade \
             --hidden-import electrum_mars.plugins.jade.jadepy.jade \
             --collect-submodules bitstring \
@@ -90,7 +90,7 @@ jobs:
 
       # A package has shipped without the fast scrypt library and without the atomic swap
       # module (Windows, up to 4.4.7). The wallet then starts but never connects.
-      - name: Self-test (complete package, connects and syncs)
+      - name: Self-test (complete package, connects to a server)
         run: ELECTRUM_MARS_SELFTEST=connect dist/electrum-mars/electrum-mars
 
       # The "version" command above does not load the window. These two do what a user does:
@@ -222,7 +222,7 @@ jobs:
             --add-binary "electrum_mars/libsecp256k1-0.dll;electrum_mars" `
             --hidden-import electrum_mars `
             --hidden-import _scrypt `
-            --collect-submodules electrum_mars `
+            --hidden-import electrum_mars.atomic_swap_htlc `
             --hidden-import electrum_mars.plugins.jade.jade `
             --hidden-import electrum_mars.plugins.jade.jadepy.jade `
             --collect-submodules bitstring `
@@ -232,7 +232,7 @@ jobs:
       - name: Smoke test (binary starts)
         run: dist/electrum-mars/electrum-mars.exe --offline -D "$env:RUNNER_TEMP/em-data" version
 
-      - name: Self-test (complete package, connects and syncs)
+      - name: Self-test (complete package, connects to a server)
         shell: pwsh
         run: |
           $env:ELECTRUM_MARS_SELFTEST = "connect"
@@ -361,7 +361,7 @@ jobs:
       - name: Smoke test (app starts)
         run: dist/Electrum-Mars.app/Contents/MacOS/run_electrum --offline -D "$RUNNER_TEMP/em-data" version
 
-      - name: Self-test (complete package, connects and syncs)
+      - name: Self-test (complete package, connects to a server)
         run: ELECTRUM_MARS_SELFTEST=connect dist/Electrum-Mars.app/Contents/MacOS/run_electrum
 
       - name: Smoke test (window opens and stays open)

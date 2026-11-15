@@ -520,7 +520,7 @@ def _selftest(mode: str) -> int:
     """Checks that a packaged wallet is complete. Used by the release build and for support.
 
     ELECTRUM_MARS_SELFTEST=1        the parts a package has been missing before
-    ELECTRUM_MARS_SELFTEST=connect  the same, then connect to the network and sync the headers
+    ELECTRUM_MARS_SELFTEST=connect  the same, then connect to a server and check headers at full speed
 
     Windows packages up to 4.4.7 had no fast scrypt library and no atomic swap module. Without
     the library every block header takes a large fraction of a second to check, the network
@@ -562,15 +562,20 @@ def _selftest(mode: str) -> int:
             create_and_start_event_loop()
             network = Network(config)
             network.start()
+            start = network.get_local_height()
             deadline = time.time() + 300
             while time.time() < deadline:
                 local, server = network.get_local_height(), network.get_server_height()
-                if network.is_connected() and server > 0 and local >= server:
-                    print(f"selftest: connected to {network.get_parameters().server}, headers at {local}", flush=True)
+                # A new wallet has about two million headers to check, which takes most of an hour.
+                # 20,000 in five minutes shows it is connected and checking them at full speed;
+                # without the fast scrypt library it manages a tenth of that.
+                if network.is_connected() and server > 0 and (local >= server or local - start >= 20000):
+                    print(f"selftest: connected to {network.get_parameters().server}, "
+                          f"headers {start} -> {local} of {server} in {int(time.time() - deadline + 300)} s", flush=True)
                     return
                 time.sleep(2)
-            raise Exception(f"not connected and in sync after 300 s (connected: {network.is_connected()}, "
-                            f"headers: {network.get_local_height()}, server: {network.get_server_height()})")
+            raise Exception(f"not connected and syncing after 300 s (connected: {network.is_connected()}, "
+                            f"headers: {start} -> {network.get_local_height()}, server: {network.get_server_height()})")
 
         check("connect and sync headers", connect)
 
