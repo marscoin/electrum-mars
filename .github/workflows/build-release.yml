@@ -76,6 +76,8 @@ jobs:
             --add-binary "electrum_mars/libsecp256k1.so.0:." \
             --hidden-import electrum_mars \
             --hidden-import _scrypt \
+            --hidden-import electrum_mars.atomic_swap_htlc \
+            --hidden-import electrum_mars.btc_monitor \
             --hidden-import electrum_mars.plugins.jade.jade \
             --hidden-import electrum_mars.plugins.jade.jadepy.jade \
             --collect-submodules bitstring \
@@ -84,6 +86,11 @@ jobs:
 
       - name: Smoke test (binary starts)
         run: dist/electrum-mars/electrum-mars --offline -D "$RUNNER_TEMP/em-data" version
+
+      # A package has shipped without the fast scrypt library and without the atomic swap
+      # module (Windows, up to 4.4.7). The wallet then starts but never connects.
+      - name: Self-test (complete package, connects to a server)
+        run: ELECTRUM_MARS_SELFTEST=connect dist/electrum-mars/electrum-mars
 
       # The "version" command above does not load the window. These two do what a user does:
       # start the wallet, and start a wallet that is broken.
@@ -152,7 +159,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install pyinstaller PyQt5 cryptography pyaes `
+          python -m pip install pyinstaller PyQt5 scrypt cryptography pyaes `
             aiohttp aiohttp-socks 'aiorpcx>=0.22,<0.26' dnspython `
             'protobuf>=3.12,<4' certifi qrcode attrs bitstring qdarkstyle
 
@@ -194,6 +201,9 @@ jobs:
             --icon electrum_mars/gui/icons/marscoin.ico `
             --add-binary "electrum_mars/libsecp256k1-0.dll;electrum_mars" `
             --hidden-import electrum_mars `
+            --hidden-import _scrypt `
+            --hidden-import electrum_mars.atomic_swap_htlc `
+            --hidden-import electrum_mars.btc_monitor `
             --hidden-import electrum_mars.plugins.jade.jade `
             --hidden-import electrum_mars.plugins.jade.jadepy.jade `
             --collect-submodules bitstring `
@@ -202,6 +212,13 @@ jobs:
 
       - name: Smoke test (binary starts)
         run: dist/electrum-mars/electrum-mars.exe --offline -D "$env:RUNNER_TEMP/em-data" version
+
+      - name: Self-test (complete package, connects to a server)
+        shell: pwsh
+        run: |
+          $env:ELECTRUM_MARS_SELFTEST = "connect"
+          & dist/electrum-mars/electrum-mars.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
       - name: Smoke test (window opens and stays open)
         shell: pwsh
@@ -324,6 +341,9 @@ jobs:
 
       - name: Smoke test (app starts)
         run: dist/Electrum-Mars.app/Contents/MacOS/run_electrum --offline -D "$RUNNER_TEMP/em-data" version
+
+      - name: Self-test (complete package, connects to a server)
+        run: ELECTRUM_MARS_SELFTEST=connect dist/Electrum-Mars.app/Contents/MacOS/run_electrum
 
       - name: Smoke test (window opens and stays open)
         run: |

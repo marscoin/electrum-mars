@@ -516,8 +516,79 @@ def sys_exit(i):
     sys.exit(i)
 
 
+def _selftest(mode: str) -> int:
+    """Checks that a packaged wallet is complete. Used by the release build and for support.
+
+    ELECTRUM_MARS_SELFTEST=1        the parts a package has been missing before
+    ELECTRUM_MARS_SELFTEST=connect  the same, then connect to a server and check headers at full speed
+
+    Windows packages up to 4.4.7 had no fast scrypt library and no atomic swap module. Without
+    the library every block header takes a large fraction of a second to check, the network
+    thread is busy for hours and the wallet stays "Not connected".
+    """
+    import importlib
+    import tempfile
+    import time
+    problems = []
+
+    def check(name, fn):
+        try:
+            fn()
+            print(f"selftest ok: {name}", flush=True)
+        except BaseException as e:
+            problems.append(name)
+            print(f"selftest FAILED: {name}: {e!r}", flush=True)
+
+    def fast_scrypt():
+        import scrypt
+        scrypt.hash(b"\0" * 80, b"\0" * 80, N=1024, r=1, p=1, buflen=32)
+
+    check("fast scrypt library", fast_scrypt)
+    check("atomic swap module", lambda: importlib.import_module("electrum_mars.atomic_swap_htlc"))
+
+    datadir = tempfile.mkdtemp(prefix="electrum-mars-selftest-")
+    config = SimpleConfig({"electrum_path": datadir})
+
+    def swap_plugin():
+        plugins = init_plugins(config, "qt")
+        if "atomic_swap" not in plugins.plugins:
+            plugins.load_plugin("atomic_swap")  # raises with the reason
+
+    check("atomic swap plugin", swap_plugin)
+
+    if mode == "connect":
+        def connect():
+            from electrum_mars.network import Network
+            create_and_start_event_loop()
+            network = Network(config)
+            network.start()
+            start = network.get_local_height()
+            deadline = time.time() + 300
+            while time.time() < deadline:
+                local, server = network.get_local_height(), network.get_server_height()
+                # A new wallet has about two million headers to check, which takes most of an hour.
+                # 20,000 in five minutes shows it is connected and checking them at full speed;
+                # without the fast scrypt library it manages a tenth of that.
+                if network.is_connected() and server > 0 and (local >= server or local - start >= 20000):
+                    print(f"selftest: connected to {network.get_parameters().server}, "
+                          f"headers {start} -> {local} of {server} in {int(time.time() - deadline + 300)} s", flush=True)
+                    return
+                time.sleep(2)
+            raise Exception(f"not connected and syncing after 300 s (connected: {network.is_connected()}, "
+                            f"headers: {start} -> {network.get_local_height()}, server: {network.get_server_height()})")
+
+        check("connect and sync headers", connect)
+
+    print("selftest: " + ("all passed" if not problems else "FAILED: " + ", ".join(problems)), flush=True)
+    return 1 if problems else 0
+
+
 def main():
     # The hook will only be used in the Qt GUI right now
+    if os.environ.get('ELECTRUM_MARS_SELFTEST'):
+        code = _selftest(os.environ['ELECTRUM_MARS_SELFTEST'])
+        sys.stdout.flush()
+        os._exit(code)  # the network threads are not worth shutting down for a test
     util.setup_thread_excepthook()
     # on macOS, delete Process Serial Number arg generated for apps launched in Finder
     sys.argv = list(filter(lambda x: not x.startswith('-psn'), sys.argv))

@@ -1,10 +1,10 @@
 {
-    "161.35.136.251": {
+    "electrum.marscoin.org": {
         "pruning": "-",
         "s": "50002",
         "version": "1.4"
     },
-    "147.182.177.23": {
+    "electrum2.marscoin.org": {
         "pruning": "-",
         "s": "50002",
         "version": "1.4"
