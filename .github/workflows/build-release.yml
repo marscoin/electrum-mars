@@ -91,7 +91,7 @@ jobs:
       # A package has shipped without the fast scrypt library and without the atomic swap
       # module (Windows, up to 4.4.7). The wallet then starts but never connects.
       - name: Self-test (complete package, connects and syncs)
-        run: ELECTRUM_MARS_SELFTEST=connect xvfb-run -a dist/electrum-mars/electrum-mars
+        run: ELECTRUM_MARS_SELFTEST=connect dist/electrum-mars/electrum-mars
 
       # The "version" command above does not load the window. These two do what a user does:
       # start the wallet, and start a wallet that is broken.
